@@ -1,0 +1,27 @@
+[project]
+name = "llm-cost-benchmark-2026"
+version = "0.1.0"
+description = "2026 empirical benchmark on LLM cost optimisation"
+authors = [
+    {name = "James Crooks",email = "jam.crooks@googlemail.com"}
+]
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "anthropic (>=0.97.0,<0.98.0)",
+    "openai (>=2.33.0,<3.0.0)",
+    "pydantic (>=2.13.3,<3.0.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "llmlingua (>=0.2.2,<0.3.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.3,<10.0.0)"
+]

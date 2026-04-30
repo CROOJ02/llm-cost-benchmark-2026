@@ -1,0 +1,65 @@
+[
+  {
+    "prompt_id": "cs-001",
+    "task_category": "customer_support",
+    "complexity": "easy",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object of the form: {\"category\": one of \"billing\", \"technical\", \"feature_request\", \"complaint\", \"other\", \"reply\": a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes}. Do not include any other text.",
+      "user": "Hi, I just got my latest invoice from Acme Co for £150 but my plan is supposed to be £99 per month. Can you check what the extra £51 is for? My account is under customer@example.com. Thanks, Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "billing"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the issue and indicates investigation without committing to specific outcomes (e.g. without promising a refund, without asserting the charge is correct or incorrect)."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 65,
+      "notes": "Standard billing dispute, clear category"
+    }
+  },
+  {
+    "prompt_id": "cs-002",
+    "task_category": "customer_support",
+    "complexity": "medium",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object of the form: {\"category\": one of \"billing\", \"technical\", \"feature_request\", \"complaint\", \"other\", \"reply\": a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes}. Do not include any other text.",
+      "user": "Hello, I've been trying to integrate the Acme Co webhook API into our internal workflow for the past two days and the test events keep arriving with malformed JSON — specifically the `timestamp` field comes through as a string in some events and a Unix integer in others, which is breaking our parser. We're on the standard plan, account customer@example.com. This is blocking a release we have scheduled for tomorrow morning. Could someone from engineering take a look? — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "technical"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the issue and indicates investigation without committing to specific outcomes (e.g. without promising a fix timeline, without asserting the bug exists or doesn't)."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 145,
+      "notes": "Technical bug report with urgency cue; classification should be 'technical' not 'complaint'"
+    }
+  },
+  {
+    "prompt_id": "cs-003",
+    "task_category": "customer_support",
+    "complexity": "hard",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object of the form: {\"category\": one of \"billing\", \"technical\", \"feature_request\", \"complaint\", \"other\", \"reply\": a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes}. Do not include any other text.",
+      "user": "To whom it may concern. I have been a customer of Acme Co for over four years and over the last six months the service has noticeably degraded. The dashboard takes 8-12 seconds to load most mornings, the export-to-CSV button silently fails about one in three attempts, and when I raised a ticket on 12 March the reply came back two weeks later with a templated apology and no concrete action. I am not asking for compensation but I am letting you know that the team here is actively evaluating moving to a competitor. — Customer A, customer@example.com"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "complaint"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the breadth of issues raised and indicates a serious internal review without committing to specific outcomes (no refund offers, no SLA promises, no claims about retention). Tone should match the escalated nature of the message."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 200,
+      "notes": "Escalated multi-issue email. Designed to test disambiguation between 'complaint' and 'technical'/'feature_request'. Expected: 'complaint' because the customer is expressing dissatisfaction holistically rather than requesting a specific fix or feature."
+    }
+  }
+]
