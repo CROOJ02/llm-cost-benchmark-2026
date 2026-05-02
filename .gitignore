@@ -19,3 +19,11 @@ Thumbs.db
 *.log
 api_keys.txt
 benchmark_results.json.bak
+
+# SQLite WAL auxiliary files (transient — only present while a connection is open
+# or a write is uncheckpointed; safe to ignore, the .db file is the source of truth).
+*.db-shm
+*.db-wal
+
+# Pytest
+.pytest_cache/

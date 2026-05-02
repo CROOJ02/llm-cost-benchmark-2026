@@ -1,12 +1,17 @@
 -- LLM Cost Benchmark 2026 — SQLite schema
 -- Source of truth: docs/PRD.md §6.
 
+-- WAL mode: enables concurrent reads while a write is in flight, which matters
+-- once the runner uses ThreadPoolExecutor with INFEROPS_CONCURRENCY > 1.
+-- Persists in the DB file once set; safe to keep at the top of schema.sql.
+PRAGMA journal_mode=WAL;
+
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
     started_at TEXT NOT NULL,
     completed_at TEXT,
-    cost_so_far_usd REAL DEFAULT 0,
-    cost_cap_usd REAL NOT NULL,
+    cost_so_far_gbp REAL DEFAULT 0,
+    cost_cap_gbp REAL NOT NULL,
     status TEXT NOT NULL  -- 'running' / 'completed' / 'aborted_cost' / 'aborted_error'
 );
 
