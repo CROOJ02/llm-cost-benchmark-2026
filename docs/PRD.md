@@ -34,7 +34,7 @@ This is research, not product. Code, data, and writeup are all public. Methodolo
 ### In Scope
 
 - **5 task categories** grounded in 2026 production AI use cases
-- **20 prompts per category** = 100 prompts total, varying complexity (easy/medium/hard)
+- **20 prompts per category** (22 for extraction, with the two missing-field tests added in Day 2 review) = **102 prompts total**, varying complexity (easy/medium/hard)
 - **4 models tested**: Claude Sonnet 4.6, Claude Haiku 4.5, GPT-4o, GPT-4o-mini
 - **5 optimisation levers**: baseline, prompt caching, output capping, batch processing, prompt compression
 - **Tiered scoring**: deterministic rubrics (Tier 1), dual-judge blind evaluation (Tier 2), human arbitration on disagreements (Tier 3)
@@ -115,6 +115,8 @@ Each category gets 20 prompts, 7 easy / 7 medium / 6 hard. All prompts use synth
 
 **Risk note:** This category is flagged as the highest-risk in the benchmark. If by end of Day 3 we cannot design 20 prompts that reliably differentiate model capability, the category is **dropped from v1** and replaced with additional prompts in Categories 1–4. The writeup explicitly notes the limitation.
 
+**Day 3 outcome (2026-05-02):** kill-switch NOT triggered. All 20 reasoning prompts written and validated. The 6 hards span four differentiation mechanisms — compound constraints (rea-016, rea-017, rea-019), verification traps (rea-018, rea-019), calculation-chain compounding (rea-015), and irrelevant-information distractors (rea-016, rea-017). Spot-checks confirmed mathematics and trap mechanisms across easy/medium/hard. The category remains in v1, with the Day 9 empirical kill-switch (mid-tier success rate on hards) as the next gate.
+
 **Input shape:** A scenario requiring 2–4 logical steps to reach a final answer (e.g. proration calculation, multi-condition eligibility check, simple workflow planning).
 
 **Task:** Provide reasoning and final answer.
@@ -156,16 +158,16 @@ Four models, two providers. Captured `model_version` strings on every API call t
 
 **Total runs:**
 
-- Baseline: 100 prompts × 4 models = 400
-- Caching: 100 × 4 = 400
-- Output cap: 100 × 4 = 400
-- Batch: 100 × 4 = 400
-- Compression: 30-prompt stratified subset × 4 models = 120 (conditional on Day 8 budget gate — see §9 Day 8; or 0 if dropped from Day 1 verification)
-- **Total: 1,720 model runs** (1,600 if compression skipped for budget or technical reasons)
+- Baseline: 102 prompts × 4 models = 408
+- Caching: 102 × 4 = 408
+- Output cap: 102 × 4 = 408
+- Batch: 102 × 4 = 408
+- Compression: conditional on the Day 8 budget ladder (see §9 Day 8) — full matrix (102 × 4 = 408 runs) if >£180 remaining, 60-prompt stratified subset (240 runs) if >£120, 30-prompt stratified subset (120 runs) if >£80, skip if <£40 (or 0 if dropped from Day 1 verification)
+- **Total: 1,632–2,040 model runs** depending on the compression tier reached
 
-**Plus dual-judge layer:** Tier 2 prompts × 4 models × 2 judges per lever, plus a smaller proportional set across the compression subset. Order of ~2,000 total judgement calls (~1,900 if compression skipped). Cheaper per call than the model runs.
+**Plus dual-judge layer:** Tier 2 prompts × 4 models × 2 judges per lever, plus a proportional set across the compression tier actually run. Order of ~1,900–2,200 total judgement calls. Cheaper per call than the model runs.
 
-**Compression as a subset, not the full matrix:** running compression on the full 100-prompt matrix would consume ~£30–60 of headroom that's better reserved for completion and the dual-judge layer. The 30-prompt stratified subset keeps the compression finding directional (one cost-quality datapoint per category) rather than full-coverage. The subset is stratified across the 5 categories so each contributes to the signal.
+**Compression as a tiered, conditional lever:** running compression on the full 102-prompt matrix would consume ~£30–60 of headroom that may be better reserved for completion and the dual-judge layer. The Day 8 budget ladder picks the largest subset the remaining headroom supports — full matrix at the high end, 60- or 30-prompt stratified subsets at lower headroom levels, skip at the floor. Subsets are stratified across the 5 categories so each contributes to the signal even at the smallest tier.
 
 **Estimated total cost:** £150–280 across all model runs and judgement calls. Hard cap **£300**, soft warning **£250**.
 
@@ -426,8 +428,8 @@ llm-cost-benchmark-2026/
 - Write all 20 summarisation prompts
 - Attempt to write all 20 multi-step reasoning prompts
   - **If reasoning prompts cannot reliably differentiate models by end of day:** drop Category 5 from v1, write 5 additional prompts each for Categories 1–4 to compensate, document the drop in PRD
-- All 100 prompts schema-valid
-- **Done when:** 100 prompts (or 80 with documented Cat 5 drop) in version control
+- All 102 prompts schema-valid
+- **Done when:** 102 prompts in version control (Cat 5 reasoning kept — see §3 Day 3 outcome)
 
 ### Day 4 — Anthropic runner (Fri 3 May)
 
@@ -460,21 +462,23 @@ llm-cost-benchmark-2026/
 
 ### Day 7 — Run baseline + submit batch jobs (Mon 6 May)
 
-- Submit batch jobs for all 100 prompts × 4 models on baseline (batch turnaround ~24h)
-- Run synchronous baseline for all 100 prompts × 4 models = 400 runs
+- Submit batch jobs for all 102 prompts × 4 models on baseline (batch turnaround ~24h)
+- Run synchronous baseline for all 102 prompts × 4 models = 408 runs
 - Watch cost tracker. Target: under £80 spent by end of day
-- **Done when:** 400 baseline rows in SQLite, batch jobs submitted
+- **Done when:** 408 baseline rows in SQLite, batch jobs submitted
 
 ### Day 8 — Run lever matrix (Tue 7 May)
 
 - Collect batch job results from Day 7
-- Run sync caching and output cap levers across full matrix (~800 additional model runs)
-- **Budget check before compression** (revision applied with the £300 cap decision):
-  - If **>£80 remaining** under the £300 cap: run compression on the 30-prompt stratified subset (120 model runs)
+- Run sync caching and output cap levers across full matrix (~816 additional model runs)
+- **Budget ladder before compression** (refined 2026-05-02 with the four-tier decision):
+  - If **>£180 remaining** under the £300 cap: run compression on the **full matrix** (102 × 4 = 408 model runs)
+  - If **£120–£180 remaining**: run compression on a **60-prompt stratified subset** (240 model runs)
+  - If **£80–£120 remaining**: run compression on a **30-prompt stratified subset** (120 model runs)
   - If **£40–£80 remaining**: operator's call — run a reduced subset (e.g. 15 prompts) or skip
   - If **<£40 remaining**: skip compression entirely; document as a budget-gated drop in the writeup limitations section
-- Watch cost tracker. Target: under £180 total spent by end of day, leaving headroom for judge calls on Days 10–11
-- **Done when:** ~1,720 rows in SQLite (or 1,600 if compression skipped for budget or technical reasons)
+- Watch cost tracker. Aim to leave at least £30 of headroom under the £300 cap for the Day 10–11 judge calls
+- **Done when:** between 1,632 and 2,040 rows in SQLite depending on which compression tier landed (1,632 if compression skipped, 2,040 if full matrix ran)
 
 ### Day 9 — Tier 1 scoring + KILL-SWITCH CHECKPOINT (Wed 8 May)
 
