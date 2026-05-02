@@ -295,7 +295,7 @@ Categories: customer support reply quality (Cat 1 partial), Q&A phrasing (Cat 2 
 **Two judges, different model families:**
 
 - Judge A: Claude Opus 4.6 (Anthropic family — same family as Sonnet/Haiku in test set, residual bias acknowledged)
-- Judge B: Mistral Large (different family entirely — primary bias control)
+- Judge B: `mistral-large-2512` (Mistral; different family entirely — primary bias control). Pinned to the explicit `2512` version rather than the `mistral-large-latest` alias for stable rate limits (~360 RPM on the versioned model vs ~15 RPM on the alias — see methodology doc) and reproducibility across the run.
 
 Both judges are configured to score on the prompt-specific Tier 2 criteria.
 
@@ -495,7 +495,7 @@ llm-cost-benchmark-2026/
 
 - Build `scoring/judge.py` with:
   - Blind evaluation (response order randomised per prompt)
-  - Calls Claude Opus 4.6 as Judge A, Mistral Large as Judge B
+  - Calls Claude Opus 4.6 as Judge A, `mistral-large-2512` as Judge B
   - Position randomisation within each prompt's response set
 - Run judge passes across Tier 2 results
 - Identify disagreements (judges differ by >0.2)
