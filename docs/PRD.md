@@ -7,7 +7,7 @@
 **Owner:** James Crooks
 **Repository:** `/Users/jamescrooks/llm-cost-benchmark-2026/` (local)
 **Publish target:** Wednesday 14 May 2026
-**API budget cap:** £450 hard, £350 soft warning
+**API budget cap:** £300 hard, £250 soft warning
 
 ---
 
@@ -160,12 +160,14 @@ Four models, two providers. Captured `model_version` strings on every API call t
 - Caching: 100 × 4 = 400
 - Output cap: 100 × 4 = 400
 - Batch: 100 × 4 = 400
-- Compression: 100 × 4 = 400 (or 0 if dropped)
-- **Total: 2,000 model runs** (or 1,600 if compression dropped)
+- Compression: 30-prompt stratified subset × 4 models = 120 (conditional on Day 8 budget gate — see §9 Day 8; or 0 if dropped from Day 1 verification)
+- **Total: 1,720 model runs** (1,600 if compression skipped for budget or technical reasons)
 
-**Plus dual-judge layer:** Tier 2 prompts (~60 per matrix cell) × 4 models × 2 judges = ~480 judgement calls per lever ≈ 2,400 total judgement calls. Cheaper per call than the model runs.
+**Plus dual-judge layer:** Tier 2 prompts × 4 models × 2 judges per lever, plus a smaller proportional set across the compression subset. Order of ~2,000 total judgement calls (~1,900 if compression skipped). Cheaper per call than the model runs.
 
-**Estimated total cost:** £200–350 across all model runs and judgement calls. Hard cap £450.
+**Compression as a subset, not the full matrix:** running compression on the full 100-prompt matrix would consume ~£30–60 of headroom that's better reserved for completion and the dual-judge layer. The 30-prompt stratified subset keeps the compression finding directional (one cost-quality datapoint per category) rather than full-coverage. The subset is stratified across the 5 categories so each contributes to the signal.
+
+**Estimated total cost:** £150–280 across all model runs and judgement calls. Hard cap **£300**, soft warning **£250**.
 
 ---
 
@@ -275,9 +277,14 @@ CREATE INDEX idx_results_run ON results(run_id);
 
 ### Tier 1 — Deterministic Rubrics
 
-Categories: classification (Cat 1 partial), Q&A correctness (Cat 2 partial), structured extraction (Cat 3), reasoning final-answer correctness (Cat 5 partial).
+Categories: classification (Cat 1 partial), Q&A `supporting_sentences` only (Cat 2 partial — see RAG note below), structured extraction (Cat 3), reasoning final-answer correctness (Cat 5 partial).
 
 Implementation: a Python function per category in `scoring/tier_1.py` that takes the parsed response and the expected output, returns a 0.0–1.0 score. Deterministic, repeatable.
+
+**RAG Q&A scoring split (revision applied 2026-04-30 after Day 2 prompt review):**
+
+- Tier 1 deterministic scoring for RAG covers ONLY the `supporting_sentences` integer array. The `answer` text field is scored entirely by the Tier 2 dual-judge layer against the prompt's `tier_2_judge.criteria`. The expected answer in `tier_1_deterministic.expected.answer` serves as the reference answer provided to judges, not as a verbatim string-match target.
+- For `supporting_sentences`, the rubric accepts the minimal citation set that supports the answer, plus any superset that includes additional sentences explicitly establishing the question's subject or context. A model citing `[answer_sentence]` and a model citing `[subject_sentence, answer_sentence]` both score 1.0. A model citing unrelated sentences or missing the answer sentence scores 0.0.
 
 ### Tier 2 — Dual-Judge Blind Evaluation
 
@@ -303,6 +310,15 @@ Both judges are configured to score on the prompt-specific Tier 2 criteria.
 - Each response gets two judge scores (`judge_a_score`, `judge_b_score`)
 - If both judges agree within 0.2 (i.e. |a - b| ≤ 0.2): score = median(a, b), no disagreement flag
 - If judges disagree by more than 0.2: `judge_disagreement_flag = 1`, sent to Tier 3
+
+**Partial-credit guidance (Day 10 judge prompt template):**
+
+When the judge prompt template is built on Day 10, it must include explicit partial-credit instructions. Some prompts test multiple facts in a single answer (e.g. RAG questions like "X and Y?" where the model could be right on X but wrong on Y). Judges should:
+
+- Score 1.0 when the response satisfies all criteria fully and accurately
+- Score 0.5–0.7 when the response covers part of the criteria correctly but is missing one or more components
+- Score 0.0–0.3 when the response is wrong on the central facts or misleading
+- Use intermediate values where appropriate; do not collapse to only 0 or 1
 
 ### Tier 3 — Human Arbitration on Disagreements Only
 
@@ -419,6 +435,7 @@ llm-cost-benchmark-2026/
   - Native `anthropic` SDK calls
   - Retry with exponential backoff on 429
   - Cost tracking against `runs` table
+  - Cost-cap enforcement reflecting §10: hard cap **£300**, soft warning at **£250** (the runner reads these from a single source so a future revision changes one place)
   - Skip-if-exists logic checking `(prompt_id, model, lever, config_hash, run_attempt)`
   - Concurrency configurable via `INFEROPS_CONCURRENCY` env var (default 4)
 - Test against 5 prompts on Sonnet 4.6 baseline
@@ -451,10 +468,13 @@ llm-cost-benchmark-2026/
 ### Day 8 — Run lever matrix (Tue 7 May)
 
 - Collect batch job results from Day 7
-- Run sync caching, output cap, compression levers across full matrix
-- 1,200+ additional runs (or 800 if compression dropped)
-- Watch cost tracker. Target: under £200 total spent by end of day
-- **Done when:** ~2,000 rows in SQLite (or 1,600 if compression dropped)
+- Run sync caching and output cap levers across full matrix (~800 additional model runs)
+- **Budget check before compression** (revision applied with the £300 cap decision):
+  - If **>£80 remaining** under the £300 cap: run compression on the 30-prompt stratified subset (120 model runs)
+  - If **£40–£80 remaining**: operator's call — run a reduced subset (e.g. 15 prompts) or skip
+  - If **<£40 remaining**: skip compression entirely; document as a budget-gated drop in the writeup limitations section
+- Watch cost tracker. Target: under £180 total spent by end of day, leaving headroom for judge calls on Days 10–11
+- **Done when:** ~1,720 rows in SQLite (or 1,600 if compression skipped for budget or technical reasons)
 
 ### Day 9 — Tier 1 scoring + KILL-SWITCH CHECKPOINT (Wed 8 May)
 
@@ -527,11 +547,11 @@ Anthropic and OpenAI tier-based rate limits checked on Day 1. Retry logic uses e
 
 ### Cost Cap
 
-Hard cap: £450. Soft warning at £350.
+Hard cap: **£300**. Soft warning at **£250**.
 
 Before every API call, runner checks `cost_so_far_usd + estimated_cost > cost_cap_usd`. If exceeded:
 
-- Runner aborts with clear stderr message: `"Cost cap of £450 reached. Completed N of M planned runs. To resume, raise --cost-cap or use --force-resume."`
+- Runner aborts with clear stderr message: `"Cost cap of £300 reached. Completed N of M planned runs. Raise --cost-cap (e.g. --cost-cap=350) and re-run with --force-resume to continue. Skip-if-exists logic prevents redoing completed work."`
 - `runs.status = 'aborted_cost'`
 - Re-running with raised cap or `--force-resume` continues from where it stopped (skip-if-exists handles this naturally)
 
@@ -563,7 +583,7 @@ API keys never committed. `.env` is gitignored. `.env.example` is committed show
 | Reasoning category (Cat 5) can't be designed to differentiate models | Medium     | Day 3 go/no-go; drop Cat 5 if unworkable                                            |
 | Mistral Large API access requires approval delays                    | Low        | Day 1 verification; fallback to Cohere Command R+ as Judge B if delayed             |
 | Provider rate limits throttle the run                                | Medium     | Day 1 tier verification; configurable concurrency                                   |
-| Total runs blow past £450 cost cap                                   | Low        | Hard cap enforced at runner level; estimated cost is well within budget             |
+| Total runs blow past £300 cost cap                                   | Low        | Hard cap enforced at runner level; compression scoped to a 30-prompt subset to preserve headroom; Day 8 budget gate skips compression if <£40 remains |
 | Findings are weak / models score equivalently across the board       | Medium     | Day 9 kill-switch with pivot writeup option                                         |
 | Two-week scope slips into three                                      | Medium     | Day 15 buffer; if slips beyond Day 15, ship what we have honestly                   |
 | Writeup tone drifts toward marketing language                        | High       | Tone discipline in PRD; read aloud check on Day 14                                  |
