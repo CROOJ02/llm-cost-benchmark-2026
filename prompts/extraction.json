@@ -1,0 +1,551 @@
+[
+  {
+    "prompt_id": "ext-001",
+    "task_category": "extraction",
+    "complexity": "easy",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `name` (string): the customer's full name, or null if not present\n- `email` (string): the customer's email address, or null if not present\n- `amount` (number): the invoice total in pounds as a number with no currency symbol, or null if not present\n\nDo not include any other text.",
+      "user": "Invoice from Acme Co\n\nBilled to: Customer A\nEmail: customer.a@example.com\nTotal due: £249.00\n\nThank you for your business."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "name": "Customer A",
+          "email": "customer.a@example.com",
+          "amount": 249.0
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 45,
+      "notes": "Easy invoice extraction with three clearly labelled fields; tests basic field shape and currency-symbol stripping."
+    }
+  },
+  {
+    "prompt_id": "ext-002",
+    "task_category": "extraction",
+    "complexity": "easy",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `first_name` (string): the sender's first name, or null if not present\n- `last_name` (string): the sender's last name, or null if not present\n- `email` (string): the sender's email address, or null if not present\n- `phone` (string): the sender's phone number as a string in the exact format given, or null if not present\n\nDo not include any other text.",
+      "user": "Subject: Enquiry about enterpr1se tier\n\nHi there\n\nMy name is Customer B and Id like to know more about your enterprise tier\n\nBest\nCustomer B (Surname Two)\ncustomer.b@example.cc>m\n+44 77OO 9OO123\n\n--\nSent from my phone, please excuse typos"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "first_name": "Customer",
+          "last_name": "Two",
+          "email": "customer.b@example.com",
+          "phone": "+44 7700 900123"
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 75,
+      "notes": "Easy contact-block extraction with realistic noise. Tests OCR-style noise correction in email and phone extraction. Models should normalise '0' from 'O' in the phone number, correct 'cc>m' to 'com' in the email, and ignore the deliberate typo 'enterpr1se' in the subject."
+    }
+  },
+  {
+    "prompt_id": "ext-003",
+    "task_category": "extraction",
+    "complexity": "easy",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `applicant_name` (string): the applicant's full name, or null if not present\n- `role_applied_for` (string): the role title, or null if not present\n- `years_experience` (integer): the applicant's stated years of experience as an integer, or null if not present\n\nDo not include any other text.",
+      "user": "Application Summary\n\nApplicant: Customer C\nRole: Senior Backend Engineer\nYears of experience: 8\n\nReceived via the careers portal."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "applicant_name": "Customer C",
+          "role_applied_for": "Senior Backend Engineer",
+          "years_experience": 8
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 40,
+      "notes": "Easy job-application snippet; tests integer typing for a small numeric field."
+    }
+  },
+  {
+    "prompt_id": "ext-004",
+    "task_category": "extraction",
+    "complexity": "easy",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `tracking_number` (string): the parcel tracking number, or null if not present\n- `carrier` (string): the delivery carrier name, or null if not present\n- `recipient_name` (string): the recipient's name, or null if not present\n\nDo not include any other text.",
+      "user": "Delivery confirmation\n\nYour parcel has been delivered.\n\nRecipient: Customer D\nCarrier: ParcelExample\nTracking number: PE1234567890GB\n\nThank you for using ParcelExample."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "tracking_number": "PE1234567890GB",
+          "carrier": "ParcelExample",
+          "recipient_name": "Customer D"
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 45,
+      "notes": "Easy delivery-confirmation extraction; tests verbatim string preservation of an alphanumeric tracking code."
+    }
+  },
+  {
+    "prompt_id": "ext-005",
+    "task_category": "extraction",
+    "complexity": "easy",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `full_name` (string): the sign-up form's full name field, or null if not present\n- `email` (string): the email address, or null if not present\n- `company` (string): the company name, or null if not present\n- `marketing_opt_in` (boolean): true if the user opted into marketing emails, false if they explicitly declined, or null if not stated\n\nDo not include any other text.",
+      "user": "New sign-up received\n\nFull name: Customer E\nEmail: customer.e@example.com\nCompany: Acme Co\nMarketing opt-in: Yes"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "full_name": "Customer E",
+          "email": "customer.e@example.com",
+          "company": "Acme Co",
+          "marketing_opt_in": true
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 40,
+      "notes": "Easy form sign-up; tests boolean coercion from the string 'Yes'."
+    }
+  },
+  {
+    "prompt_id": "ext-006",
+    "task_category": "extraction",
+    "complexity": "easy",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `meeting_title` (string): the meeting's title, or null if not present\n- `attendee_count` (integer): the number of attendees as an integer, or null if not present\n- `chair` (string): the name of the person chairing the meeting, or null if not present\n\nDo not include any other text.",
+      "user": "Internal note\n\n meeting: Q2 Planning Sync\n CHAIR:Customer F\nattendees present:6\n\n Notes to follow."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "meeting_title": "Q2 Planning Sync",
+          "attendee_count": 6,
+          "chair": "Customer F"
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 35,
+      "notes": "Tests robustness to formatting noise — inconsistent whitespace, inconsistent label casing, missing spaces after colons. Expected output unchanged from clean version."
+    }
+  },
+  {
+    "prompt_id": "ext-007",
+    "task_category": "extraction",
+    "complexity": "easy",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `policy_name` (string): the name of the policy, or null if not present\n- `effective_date` (string): the effective date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `version` (string): the policy version string, or null if not present\n\nDo not include any other text.",
+      "user": "Policy excerpt\n\nPolicy name: Remote Working Policy\nVersion: 2.3\nEffective date: 2026-01-15\n\nThis policy applies to all permanent staff."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "policy_name": "Remote Working Policy",
+          "effective_date": "2026-01-15",
+          "version": "2.3"
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 40,
+      "notes": "Easy policy-excerpt extraction; date is already in ISO format so no normalisation needed."
+    }
+  },
+  {
+    "prompt_id": "ext-008",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `invoice_number` (string): the invoice number, or null if not present\n- `customer_name` (string): the billed customer's name, or null if not present\n- `subtotal` (number): the subtotal in pounds as a number with no currency symbol, or null if not present\n- `vat` (number): the VAT amount in pounds as a number with no currency symbol, or null if not present\n- `total` (number): the grand total in pounds as a number with no currency symbol, or null if not present\n- `invoice_date` (string): the invoice date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `due_date` (string): the payment due date in ISO 8601 format YYYY-MM-DD, or null if not present\n\nDo not include any other text.",
+      "user": "ACME CO LTD\nInvoice no. INV-2026-0481\n\nBill to: Customer G\n\nIssued: 12 March 2026\nPayment terms: Net 30\n\nProfessional services .................. £1,200.00\nVAT (20%) ............................... £240.00\nTotal due ............................... £1,440.00\n\nPlease pay by 11 April 2026."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "invoice_number": "INV-2026-0481",
+          "customer_name": "Customer G",
+          "subtotal": 1200.0,
+          "vat": 240.0,
+          "total": 1440.0,
+          "invoice_date": "2026-03-12",
+          "due_date": "2026-04-11"
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 95,
+      "notes": "Medium invoice extraction; tests date normalisation from '12 March 2026' and from a 'Net 30' inferred due date that is also stated literally."
+    }
+  },
+  {
+    "prompt_id": "ext-009",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `lead_name` (string): the prospective customer's name, or null if not present\n- `company` (string): the company name, or null if not present\n- `email` (string): the email address, or null if not present\n- `phone` (string): the phone number in the exact format given, or null if not present\n- `team_size` (integer): the size of the team mentioned, or null if not present\n- `interested_product` (string): the product they are interested in, or null if not present\n- `budget_gbp` (number): the stated budget in pounds as a number, or null if not present\n\nDo not include any other text.",
+      "user": "Hi,\n\nI'm Customer H from Acme Co — we're a team of 24 looking at moving our analytics tooling. Could we get a demo of the Insights Pro plan? Our budget for the year is around £18,000.\n\nReach me on customer.h@example.com or +44 7700 900456.\n\nThanks,\nCustomer H"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "lead_name": "Customer H",
+          "company": "Acme Co",
+          "email": "customer.h@example.com",
+          "phone": "+44 7700 900456",
+          "team_size": 24,
+          "interested_product": "Insights Pro",
+          "budget_gbp": 18000.0
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 90,
+      "notes": "Medium lead-enrichment from a customer message; tests stripping 'around' and a comma-formatted budget, plus inferring product name from natural phrasing."
+    }
+  },
+  {
+    "prompt_id": "ext-010",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `meeting_title` (string): the meeting's title, or null if not present\n- `meeting_date` (string): the meeting date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `chair` (string): the name of the person chairing the meeting, or null if not present\n- `attendees` (array of strings): the list of attendee names, or null if not present\n- `next_meeting_date` (string): the date of the next meeting in ISO 8601 format YYYY-MM-DD, or null if not present\n\nDo not include any other text.",
+      "user": "Notes — Engineering Standup\n\nDate: 14 April 2026\nChair: Customer I\nPresent: Customer I, Customer J, Customer K, Customer L\n\nDiscussed sprint progress and the staging environment outage.\n\nNext meeting: 21 April 2026."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "meeting_title": "Engineering Standup",
+          "meeting_date": "2026-04-14",
+          "chair": "Customer I",
+          "attendees": ["Customer I", "Customer J", "Customer K", "Customer L"],
+          "next_meeting_date": "2026-04-21"
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 70,
+      "notes": "Medium internal-note extraction; tests date normalisation and parsing a comma-separated attendee list into an array."
+    }
+  },
+  {
+    "prompt_id": "ext-011",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `full_name` (string): the applicant's full name, or null if not present\n- `email` (string): the applicant's email address, or null if not present\n- `phone` (string): the phone number in the exact format given, or null if not present\n- `country` (string): the applicant's country, or null if not present\n- `referral_source` (string): how they heard about the company, or null if not stated\n- `subscribed_to_newsletter` (boolean): true if subscribed, false if explicitly opted out, null if not stated\n\nDo not include any other text.",
+      "user": "Sign-up form submission\n\nName: Customer M\nEmail: customer.m@example.com\nPhone: +44 7700 900789\nCountry: United Kingdom\nHow did you hear about us? A colleague recommended you.\nNewsletter: No, thanks."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "full_name": "Customer M",
+          "email": "customer.m@example.com",
+          "phone": "+44 7700 900789",
+          "country": "United Kingdom",
+          "referral_source": "A colleague recommended you.",
+          "subscribed_to_newsletter": false
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 60,
+      "notes": "Medium form submission; tests boolean coercion from a polite negative ('No, thanks.') and verbatim capture of a free-text referral answer."
+    }
+  },
+  {
+    "prompt_id": "ext-012",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `order_number` (string): the order reference, or null if not present\n- `recipient_name` (string): the recipient's name, or null if not present\n- `delivery_address` (string): the full delivery address as a single string, or null if not present\n- `delivery_date` (string): the actual delivery date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `signed_by` (string): the name of the person who signed for the parcel, or null if not present\n- `weight_kg` (number): the parcel weight in kilograms as a number, or null if not present\n\nDo not include any other text.",
+      "user": "ParcelExample delivery confirmation\n\nOrder: ORD-99812\nDelivered to: Customer N\nAddress: 10 Example Street, Manchester M1 1AA\nDelivered on: 2 February 2026\nSigned for by: Customer N\nParcel weight: 3.4 kg\n\nThanks for choosing ParcelExample."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "order_number": "ORD-99812",
+          "recipient_name": "Customer N",
+          "delivery_address": "10 Example Street, Manchester M1 1AA",
+          "delivery_date": "2026-02-02",
+          "signed_by": "Customer N",
+          "weight_kg": 3.4
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 70,
+      "notes": "Medium document-fragment extraction; tests stripping the 'kg' unit and normalising '2 February 2026' to ISO 8601."
+    }
+  },
+  {
+    "prompt_id": "ext-013",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `vendor` (string): the vendor name, or null if not present\n- `invoice_number` (string): the invoice number, or null if not present\n- `currency` (string): the currency as a 3-letter ISO 4217 code (e.g. 'GBP', 'EUR', 'USD'), or null if not present\n- `total` (number): the invoice total as a number with no currency symbol, or null if not present\n- `purchase_order` (string): the purchase order reference, or null if not present\n\nDo not include any other text.",
+      "user": "Acme Co — Statement\n\nVendor: Acme Co Ltd\nInvoice ref: AC-2026-0019\nAmount due: €4,750.00\nPO:\n\nPlease remit within 14 days."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "vendor": "Acme Co Ltd",
+          "invoice_number": "AC-2026-0019",
+          "currency": "EUR",
+          "total": 4750.0,
+          "purchase_order": null
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 50,
+      "notes": "Medium invoice extraction; tests currency-symbol-to-ISO-code normalisation, comma stripping, and treating an empty PO field (no value after the colon) as null."
+    }
+  },
+  {
+    "prompt_id": "ext-014",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `customer_name` (string): the customer's name, or null if not present\n- `email` (string): the customer's email address, or null if not present\n- `account_id` (string): the account identifier, or null if not present\n- `plan` (string): the subscription plan name, or null if not present\n- `monthly_seats` (integer): the number of seats on the plan as an integer, or null if not present\n- `renewal_date` (string): the renewal date in ISO 8601 format YYYY-MM-DD, or null if not present\n\nDo not include any other text.",
+      "user": "Email received on 8 February 2026.\n\nHi support,\n\nThis is Customer O (account #ACC-7741, customer.o@example.com). We're currently on the Team plan with 12 seats. Could you confirm our renewal date? I have a note from finance saying it's the 30th of June this year but I want to double-check.\n\nThanks!"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "customer_name": "Customer O",
+          "email": "customer.o@example.com",
+          "account_id": "ACC-7741",
+          "plan": "Team",
+          "monthly_seats": 12,
+          "renewal_date": "2026-06-30"
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 90,
+      "notes": "Medium customer message; tests parsing 'the 30th of June this year' to ISO 8601 using the explicit send date as the anchor for 'this year'."
+    }
+  },
+  {
+    "prompt_id": "ext-015",
+    "task_category": "extraction",
+    "complexity": "hard",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `invoice_number` (string): the invoice number, or null if not present\n- `vendor` (string): the vendor name, or null if not present\n- `customer_name` (string): the billed customer's name, or null if not present\n- `invoice_date` (string): the invoice date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `due_date` (string): the payment due date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `line_items` (array of objects): each line item as an object with keys `description` (string), `quantity` (integer), `unit_price` (number), and `line_total` (number), or null if no line items present\n- `subtotal` (number): the subtotal in pounds, or null if not present\n- `discount` (number): the absolute discount amount applied in pounds (positive number), or null if no discount\n- `total` (number): the final total in pounds, or null if not present\n\nDo not include any other text.",
+      "user": "Acme Co Ltd — Invoice\n\nInvoice number: INV-2026-1102\nIssued: 5 May 2026\nTerms: payment due within 21 days of issue\n\nBill to: Customer P\n\n  Description                        Qty   Unit     Line\n  Onboarding workshop                1     £800     £800\n  Consulting hours                   10    £120     £1,200\n  Custom integration build           1     £2,500   £2,500\n\nSubtotal: £4,500\nLoyalty discount (10%): -£450\nTotal due: £4,050\n\nPlease pay by bank transfer."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "invoice_number": "INV-2026-1102",
+          "vendor": "Acme Co Ltd",
+          "customer_name": "Customer P",
+          "invoice_date": "2026-05-05",
+          "due_date": "2026-05-26",
+          "line_items": [
+            {"description": "Onboarding workshop", "quantity": 1, "unit_price": 800.0, "line_total": 800.0},
+            {"description": "Consulting hours", "quantity": 10, "unit_price": 120.0, "line_total": 1200.0},
+            {"description": "Custom integration build", "quantity": 1, "unit_price": 2500.0, "line_total": 2500.0}
+          ],
+          "subtotal": 4500.0,
+          "discount": 450.0,
+          "total": 4050.0
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 150,
+      "notes": "Hard invoice extraction with a list of line items as nested objects, a due date computed from issue date plus 21 days, and a discount expressed as a negative line that must be normalised to a positive absolute number."
+    }
+  },
+  {
+    "prompt_id": "ext-016",
+    "task_category": "extraction",
+    "complexity": "hard",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `lead_name` (string): the prospective customer's name, or null if not present\n- `company` (string): the company name, or null if not present\n- `email` (string): the best email address to reach them on, or null if not present\n- `phone` (string): the best phone number in the exact format given, or null if not present\n- `country` (string): the country they are based in, expressed as the full English country name (e.g. 'United Kingdom', not 'UK' or 'GB'), or null if not present\n- `team_size` (integer): the size of their team, or null if not present\n- `current_tooling` (array of strings): the tools they currently use, or null if not stated\n- `requested_demo_date` (string): the requested demo date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `budget_gbp` (number): the upper bound of their stated budget in pounds, or null if not present\n\nDo not include any other text.",
+      "user": "Sent on Wednesday 6 May 2026 at 09:14\n\nHello,\n\nI'm Customer Q, head of operations at Acme Co. We're a team of about 35 (UK based). I previously emailed from my personal account customer.q@example.org but please use my work email customer.q@acme.co going forward — the personal one is just for backup.\n\nWe currently use ToolExampleA for ticketing, ToolExampleB for analytics, and a homegrown spreadsheet for everything else. We'd love a demo — could we do next Tuesday? Our budget for this year is somewhere between £20k and £30k.\n\nYou can also reach me on +44 7700 900222.\n\nThanks,\nCustomer Q"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "lead_name": "Customer Q",
+          "company": "Acme Co",
+          "email": "customer.q@acme.co",
+          "phone": "+44 7700 900222",
+          "country": "United Kingdom",
+          "team_size": 35,
+          "current_tooling": ["ToolExampleA", "ToolExampleB"],
+          "requested_demo_date": "2026-05-12",
+          "budget_gbp": 30000.0
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 180,
+      "notes": "Hard lead-enrichment with multiple traps: two candidate emails where the explicitly preferred one wins, 'next Tuesday' resolved against a stated send date of Wed 6 May 2026, country inferred from 'UK based', a tooling list that excludes the homegrown spreadsheet, and a budget range whose upper bound is the requested value."
+    }
+  },
+  {
+    "prompt_id": "ext-017",
+    "task_category": "extraction",
+    "complexity": "hard",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `incident_id` (string): the incident reference, or null if not present\n- `severity` (string): the severity level (e.g. 'P1', 'P2', 'P3'), or null if not present\n- `start_time_utc` (string): the incident start time in ISO 8601 format YYYY-MM-DDTHH:MM:SSZ, or null if not present\n- `end_time_utc` (string): the incident end time in ISO 8601 format YYYY-MM-DDTHH:MM:SSZ, or null if not present\n- `duration_minutes` (integer): the total incident duration in whole minutes, or null if not derivable\n- `affected_services` (array of strings): the list of affected services, or null if not stated\n- `on_call_engineer` (string): the on-call engineer's name, or null if not present\n- `customer_facing` (boolean): true if customers were impacted, false if not, null if not stated\n\nDo not include any other text.",
+      "user": "Incident handover note (recorded 28 April 2026)\n\nINC-20260428-04 — sev P2.\n\nStarted at 14:05 BST on Tue 28 April, recovered at 15:35 BST same day. (BST is UTC+1.)\n\nServices hit: API gateway and the billing webhook processor. The mobile app stayed up.\n\nOn-call was Customer R. There were customer reports in the support inbox so this is definitely customer-facing.\n\nRoot cause TBD — handing over to the next on-call shift."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "incident_id": "INC-20260428-04",
+          "severity": "P2",
+          "start_time_utc": "2026-04-28T13:05:00Z",
+          "end_time_utc": "2026-04-28T14:35:00Z",
+          "duration_minutes": 90,
+          "affected_services": ["API gateway", "billing webhook processor"],
+          "on_call_engineer": "Customer R",
+          "customer_facing": true
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 130,
+      "notes": "Hard internal handover note; tests BST-to-UTC timezone conversion using the explicitly stated offset, derived duration in minutes, list extraction excluding an explicitly unaffected service, and boolean inference from indirect language."
+    }
+  },
+  {
+    "prompt_id": "ext-018",
+    "task_category": "extraction",
+    "complexity": "hard",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `policy_name` (string): the name of the policy, or null if not present\n- `version` (string): the policy version, or null if not present\n- `effective_date` (string): the effective date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `review_date` (string): the next review date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `owner` (string): the policy owner's name, or null if not present\n- `applies_to_permanent_employees` (boolean): true if the policy applies to permanent employees, false if not\n- `applies_to_fixed_term_contractors_six_months_plus` (boolean): true if the policy applies to fixed-term contractors on six-month-plus contracts, false if not\n- `applies_to_short_term_agency_workers` (boolean): true if the policy applies to short-term agency workers, false if not\n- `max_consecutive_remote_days` (integer): the maximum number of consecutive remote-working days permitted, or null if not stated\n- `requires_manager_approval` (boolean): true if manager approval is required for remote working, false if not, null if not stated\n\nDo not include any other text.",
+      "user": "Acme Co — Remote Working Policy (v3.1)\n\nThis policy is owned by Customer S, Head of People. It comes into effect on the first of June 2026 and will be reviewed twelve months after that date.\n\nThe policy applies to permanent employees and to fixed-term contractors on contracts of six months or more. It does not apply to short-term agency workers.\n\nEmployees may work remotely for up to 10 consecutive working days at a time. Any request to work remotely must be approved in advance by the employee's line manager."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "policy_name": "Remote Working Policy",
+          "version": "3.1",
+          "effective_date": "2026-06-01",
+          "review_date": "2027-06-01",
+          "owner": "Customer S",
+          "applies_to_permanent_employees": true,
+          "applies_to_fixed_term_contractors_six_months_plus": true,
+          "applies_to_short_term_agency_workers": false,
+          "max_consecutive_remote_days": 10,
+          "requires_manager_approval": true
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 140,
+      "notes": "Hard policy-document extraction; tests parsing 'the first of June 2026' and 'twelve months after that date' to ISO dates, and answering booleans per staff group. Restructured from free-text array to boolean-per-category to make rubric scoring deterministic."
+    }
+  },
+  {
+    "prompt_id": "ext-019",
+    "task_category": "extraction",
+    "complexity": "hard",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `applicant_name` (string): the applicant's full name, or null if not present\n- `email` (string): the applicant's email address, or null if not present\n- `role_applied_for` (string): the role title, or null if not present\n- `years_experience` (integer): the applicant's total years of relevant experience as an integer, or null if not derivable\n- `current_employer` (string): the applicant's current employer, or null if not stated\n- `notice_period_weeks` (integer): the notice period in whole weeks, or null if not stated\n- `desired_salary_gbp` (number): the desired annual salary in pounds, or null if not stated\n- `skills` (array of strings): the list of skills explicitly mentioned, or null if not stated\n- `right_to_work` (boolean): true if the applicant has the right to work in the UK, false if not, null if not stated\n\nDo not include any other text.",
+      "user": "Application — Senior Data Engineer\n\nName: Customer T\nContact: customer.t@example.com\n\nI'm currently a Lead Data Engineer at Acme Co, where I've been for the last three years. Before that I spent five years at a fintech in London as a Data Engineer. I'd be looking for a salary of £85,000 and I'm on a two-month notice. I have unrestricted right to work in the UK.\n\nKey skills: Python, SQL, Airflow, dbt, AWS.\n\nLooking forward to hearing from you."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "applicant_name": "Customer T",
+          "email": "customer.t@example.com",
+          "role_applied_for": "Senior Data Engineer",
+          "years_experience": 8,
+          "current_employer": "Acme Co",
+          "notice_period_weeks": 8,
+          "desired_salary_gbp": 85000.0,
+          "skills": ["Python", "SQL", "Airflow", "dbt", "AWS"],
+          "right_to_work": true
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 130,
+      "notes": "Hard job-application extraction; tests summing 3+5 years of experience, converting 'two-month notice' to 8 weeks, and parsing a comma-separated skills list with mixed casing preserved."
+    }
+  },
+  {
+    "prompt_id": "ext-020",
+    "task_category": "extraction",
+    "complexity": "hard",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `customer_name` (string): the customer's name, or null if not present\n- `account_id` (string): the account identifier, or null if not present\n- `email` (string): the email address, or null if not present\n- `complaint_summary` (string): a one-sentence summary of the complaint in your own words, or null if no complaint stated\n- `requested_action` (string): one of 'refund', 'replacement', 'callback', 'cancellation', 'other', or null if not stated\n- `incident_date` (string): the date of the incident in ISO 8601 format YYYY-MM-DD, or null if not derivable\n- `order_value_gbp` (number): the disputed order value in pounds, or null if not stated\n- `previous_ticket_ids` (array of strings): the list of previously raised ticket IDs referenced, or null if none\n\nDo not include any other text.",
+      "user": "Email received on Friday 24 April 2026.\n\nHi,\n\nThis is Customer U (account ACC-3320, customer.u@example.com). I am writing — again — about the order I placed three weeks before this email was sent, which arrived damaged. I have already raised tickets TCK-9001 and TCK-9014 and have heard nothing useful from either.\n\nThe order was £312.50. At this point I do not want a replacement; I would like a full refund processed to the original card.\n\nIf I do not hear back within five working days I will be raising a chargeback.\n\nRegards,\nCustomer U"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "customer_name": "Customer U",
+          "account_id": "ACC-3320",
+          "email": "customer.u@example.com",
+          "complaint_summary": "Customer U received a damaged order and has had no useful response to two prior tickets.",
+          "requested_action": "refund",
+          "incident_date": "2026-04-03",
+          "order_value_gbp": 312.5,
+          "previous_ticket_ids": ["TCK-9001", "TCK-9014"]
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 160,
+      "notes": "Hard customer message; tests inferring an incident date as 'three weeks before' a stated send date of Fri 24 April 2026, picking 'refund' over the explicitly rejected 'replacement', and extracting a list of previously-raised ticket IDs. The complaint_summary field is free-form so tier-1 scoring will treat it loosely or skip it depending on rubric implementation."
+    }
+  },
+  {
+    "prompt_id": "ext-021",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `invoice_number` (string): the invoice number, or null if not present\n- `customer_name` (string): the billed customer's name, or null if not present\n- `total` (number): the grand total in pounds as a number with no currency symbol, or null if not present\n- `invoice_date` (string): the invoice date in ISO 8601 format YYYY-MM-DD, or null if not present\n- `due_date` (string): the payment due date in ISO 8601 format YYYY-MM-DD, or null if not present\n\nDo not include any other text.",
+      "user": "ACME CO LTD\n\nInvoice no. INV-2026-0512\n\nBill to: Customer V\n\nIssued: 15 March 2026\n\nProfessional services .................. £750.00\n\nTotal due ............................... £750.00\n\nPlease pay promptly."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "invoice_number": "INV-2026-0512",
+          "customer_name": "Customer V",
+          "total": 750.0,
+          "invoice_date": "2026-03-15",
+          "due_date": null
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 70,
+      "notes": "Tests missing-field handling — the invoice has no explicit due date and 'pay promptly' is too vague to infer one. Models should output null rather than inventing a date."
+    }
+  },
+  {
+    "prompt_id": "ext-022",
+    "task_category": "extraction",
+    "complexity": "medium",
+    "input": {
+      "system": "You extract structured data from unstructured text. Respond with ONLY a JSON object containing exactly these fields:\n- `lead_name` (string): the prospective customer's name, or null if not present\n- `email` (string): the email address, or null if not present\n- `company` (string): the company name, or null if not stated\n- `team_size` (integer): the size of their team, or null if not stated\n\nDo not include any other text.",
+      "user": "Hi,\n\nI'm Customer W and I'd love to learn more about your platform. We have around 15 people on the team and we're looking for something better than what we have now.\n\nReach me at customer.w@example.com.\n\nThanks!"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "lead_name": "Customer W",
+          "email": "customer.w@example.com",
+          "company": null,
+          "team_size": 15
+        }
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 60,
+      "notes": "Tests missing-field handling — the email domain is example.com which is not a real company. Models should output null for company rather than inferring from the email domain."
+    }
+  }
+]

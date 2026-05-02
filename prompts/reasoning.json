@@ -1,0 +1,462 @@
+[
+  {
+    "prompt_id": "rea-001",
+    "task_category": "reasoning",
+    "complexity": "easy",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Customer A is on the Brightline Basic plan at £30 per month, billed in advance on the 1st of each month. They paid £30 on 1 April 2025 and cancelled their subscription on 16 April 2025. Brightline's policy is to refund the unused portion of the month on a per-day basis (a day is either fully used or fully unused; the cancellation day counts as used). April has 30 days. How much should the refund be, in pounds and pence?"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£14.00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) identify the number of unused days in April after the 16th (14 days), (b) compute the daily rate as £30/30 = £1, and (c) multiply unused days by daily rate to give £14.00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 150,
+      "notes": "Two-step proration calculation; clear setup, both top and mid-tier should solve reliably."
+    }
+  },
+  {
+    "prompt_id": "rea-002",
+    "task_category": "reasoning",
+    "complexity": "easy",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Acme Co offers a loyalty discount to customers who joined before 1 January 2024 AND have spent over £500 lifetime with the company. Customer B joined on 15 March 2023 and has spent £620 lifetime. Is Customer B eligible for the loyalty discount? Answer with exactly 'Eligible' or 'Not eligible'."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "Eligible"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must check both conditions explicitly: (a) join date is before 1 January 2024 (yes, 15 March 2023), and (b) lifetime spend exceeds £500 (yes, £620), and conclude eligibility on that basis."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 110,
+      "notes": "Two-condition eligibility check, both clearly satisfied; basic reasoning floor."
+    }
+  },
+  {
+    "prompt_id": "rea-003",
+    "task_category": "reasoning",
+    "complexity": "easy",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Task X takes 3 hours to complete and must finish before Task Y can begin. Task Y takes 2 hours. A single worker is available, who starts Task X at 09:00. What is the earliest time Task Y will be complete? Use 24-hour format HH:MM."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "14:00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) compute the end time of Task X as 12:00, (b) recognise Task Y starts immediately after at 12:00, and (c) conclude Y completes at 14:00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 90,
+      "notes": "Simple sequential scheduling; two-step time arithmetic."
+    }
+  },
+  {
+    "prompt_id": "rea-004",
+    "task_category": "reasoning",
+    "complexity": "easy",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "A meeting is scheduled for 15:00 London time on Thursday 12 June 2025. London is on British Summer Time (BST, UTC+1) on that date. New York is on Eastern Daylight Time (EDT, UTC-4) on that date. What is the equivalent local time in New York? Use 24-hour format HH:MM."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "10:00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) identify the offset difference between London (UTC+1) and New York (UTC-4) as 5 hours, (b) subtract 5 hours from 15:00, and (c) state 10:00 as the New York time."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 100,
+      "notes": "Single timezone conversion; offsets are explicitly given so no DST hallucination required."
+    }
+  },
+  {
+    "prompt_id": "rea-005",
+    "task_category": "reasoning",
+    "complexity": "easy",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "An item is listed at £80 excluding VAT. UK VAT is 20%. What is the total price including VAT? Give the answer in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£96.00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) compute 20% of £80 as £16, and (b) add it to the £80 base to give £96.00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 60,
+      "notes": "Tax-exclusive to tax-inclusive conversion; baseline arithmetic."
+    }
+  },
+  {
+    "prompt_id": "rea-006",
+    "task_category": "reasoning",
+    "complexity": "easy",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Brightline's refund policy: a customer is entitled to a full refund if (a) the refund is requested within 14 days of purchase AND (b) the item is unopened. Customer A purchased on 5 May 2025 and requested a refund on 14 May 2025. The item has been opened. Is Customer A entitled to a full refund? Answer with exactly 'Entitled' or 'Not entitled'."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "Not entitled"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must check both conditions explicitly and identify that although the timing condition is satisfied (9 days, within 14), the unopened condition fails because the item has been opened — therefore not entitled."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 110,
+      "notes": "Two-condition refund eligibility where one condition fails; tests whether model checks both clauses rather than stopping at the first satisfied one."
+    }
+  },
+  {
+    "prompt_id": "rea-007",
+    "task_category": "reasoning",
+    "complexity": "easy",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Customer A's cart at Acme Co totals £120. They apply a single 15% promotional discount. What is the final amount they pay? Give the answer in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£102.00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) compute 15% of £120 as £18 (or equivalently 85% of £120), and (b) subtract from £120 to give £102.00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 60,
+      "notes": "Single-percentage-discount arithmetic; baseline."
+    }
+  },
+  {
+    "prompt_id": "rea-008",
+    "task_category": "reasoning",
+    "complexity": "medium",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Customer A is on Acme Co's Standard plan at £40 per month, billed in advance on the 1st of each month. They paid £40 on 1 May 2025 (May has 31 days). On 11 May 2025 they upgrade to the Premium plan at £100 per month. Acme Co's policy: on upgrade, the customer is credited for the unused days of the old plan and charged for the remaining days of the new plan, both prorated by exact days. Days 1-10 May count as used Standard; days 11-31 May (21 days) count as used Premium. What additional amount, on top of the £40 already paid, should be charged to Customer A for May? Round to the nearest penny and give the answer in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£40.65"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) compute the Standard credit as £40 × 21/31 ≈ £27.10, (b) compute the Premium charge as £100 × 21/31 ≈ £67.74, and (c) take the difference (Premium charge minus Standard credit) to give approximately £40.65."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 200,
+      "notes": "Three-step proration with upgrade; mid-tier should mostly succeed but rounding/fraction errors possible."
+    }
+  },
+  {
+    "prompt_id": "rea-009",
+    "task_category": "reasoning",
+    "complexity": "medium",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Acme Co's enterprise discount requires ALL of the following: (a) 50 or more user seats, (b) an annual (not monthly) contract, and (c) the contract must be signed before 31 March 2025. Customer C has 80 seats, signed an annual contract on 28 February 2025. Is Customer C eligible for the enterprise discount? Answer with exactly 'Eligible' or 'Not eligible'."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "Eligible"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must check all three conditions explicitly: (a) 80 seats ≥ 50, (b) contract is annual, (c) signed 28 February 2025 which is before 31 March 2025; conclude eligible."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 130,
+      "notes": "Three-condition eligibility, all satisfied; tests whether model verifies each clause."
+    }
+  },
+  {
+    "prompt_id": "rea-010",
+    "task_category": "reasoning",
+    "complexity": "medium",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Brightline has four tasks to complete on Monday: Task A (4 hours), Task B (3 hours), Task C (2 hours), Task D (5 hours). Constraint: Task B can only start once Task A is complete. There are no other ordering constraints. Two workers are available. Each worker can do one task at a time. Both workers start at 09:00. Tasks are not interruptible (once started, they run to completion). Assuming the schedule is optimised to minimise the time at which the last task completes, what is the earliest time all four tasks will be complete? Use 24-hour format HH:MM."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "16:00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must allocate tasks across two workers respecting the A-before-B constraint, identifying that Worker 1 can do A then B (4+3=7h, ending 16:00) and Worker 2 can do D then C (5+2=7h, ending 16:00); both finish at 16:00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 180,
+      "notes": "Capacity-constrained scheduling with one dependency; requires considering parallel allocation."
+    }
+  },
+  {
+    "prompt_id": "rea-011",
+    "task_category": "reasoning",
+    "complexity": "medium",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Customer A paid an invoice of USD 1,200 on 1 March 2025, when the exchange rate was 1 USD = 0.79 GBP. On 1 April 2025 the same USD 1,200 amount was refunded to them, when the exchange rate was 1 USD = 0.77 GBP. The customer's bank converts at the spot rate on each transaction date with no fees. In GBP terms, what is the customer's net loss from this round-trip? Give the answer in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£24.00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) compute GBP cost of original payment as 1200 × 0.79 = £948, (b) compute GBP value of refund as 1200 × 0.77 = £924, and (c) state the net loss as £948 - £924 = £24.00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 130,
+      "notes": "Currency conversion with three-step calculation; tests whether model handles round-trip correctly."
+    }
+  },
+  {
+    "prompt_id": "rea-012",
+    "task_category": "reasoning",
+    "complexity": "medium",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Customer A's order subtotal at Brightline is £200. They have a 10% loyalty discount and a £20 fixed-amount voucher. Brightline's published policy is that percentage discounts are applied first, and fixed-amount vouchers are applied to the post-percentage subtotal. VAT is not relevant to this calculation. What is the final amount Customer A pays? Give the answer in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£160.00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) apply the 10% discount to £200 to give £180, then (b) subtract the £20 voucher to give £160.00, in that order."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 130,
+      "notes": "Discount stacking with explicit ordering; tests whether model follows the stated policy order."
+    }
+  },
+  {
+    "prompt_id": "rea-013",
+    "task_category": "reasoning",
+    "complexity": "medium",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Three colleagues — Alex, Bea, and Cam — each own exactly one of three devices: a laptop, a tablet, and a phone. Each device is owned by exactly one person. The following clues hold: (1) Alex does not own the laptop. (2) Bea owns the phone. (3) The tablet owner sits next to Cam at lunch. Which device does Cam own?"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "laptop"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) use clue 2 to fix Bea = phone, (b) use clue 1 with the remaining options (laptop, tablet) to assign Alex = tablet, and (c) conclude Cam = laptop by elimination; clue 3 is consistent with this assignment."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 110,
+      "notes": "Constraint satisfaction with three people, three devices; tests basic deductive chain."
+    }
+  },
+  {
+    "prompt_id": "rea-014",
+    "task_category": "reasoning",
+    "complexity": "medium",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Brightline offers three plan tiers: Basic (up to 5 users, no SSO, no custom domain), Standard (up to 15 users, SSO, no custom domain), and Pro (up to 50 users, SSO, custom domain). Pricing rises with each tier. Customer C requires SSO and a custom domain, and has 22 users. Brightline's policy is to recommend the cheapest plan that meets all the customer's stated requirements. Which plan should be recommended? Answer with exactly 'Basic', 'Standard', or 'Pro'."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "Pro"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) eliminate Basic (lacks SSO and custom domain, and capped at 5 users), (b) eliminate Standard (lacks custom domain, and capped at 15 users below the 22 needed), and (c) conclude Pro is the only plan meeting all requirements."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 150,
+      "notes": "Three-step plan-tier matching against multiple requirements; mid-tier should mostly succeed."
+    }
+  },
+  {
+    "prompt_id": "rea-015",
+    "task_category": "reasoning",
+    "complexity": "hard",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Customer A subscribed to Brightline Standard at £60 per month on 1 February 2025, billed in advance on the 1st of each month. February 2025 has 28 days; March 2025 has 31 days. The following events occurred:\n\n1. 1 Feb 2025: Customer A paid £60 for the Standard plan (covering 1-28 Feb).\n2. 17 Feb 2025: Customer A upgraded to Premium at £150 per month. Per Brightline policy, on upgrade the customer is credited for the unused days of the old plan and charged for the remaining days of the new plan, both prorated by exact days. Days 1-16 Feb count as used Standard; days 17-28 Feb (12 days) count as Premium.\n3. 1 Mar 2025: Customer A was billed £150 for the Premium plan (covering 1-31 Mar).\n4. 5 Mar 2025: Customer A downgraded to Basic at £30 per month. Per the same proration policy, days 1-4 Mar count as used Premium; days 5-31 Mar (27 days) count as Basic.\n\nWhat is the total amount Customer A has paid (net of credits) across both February and March? Compute prorated amounts using exact fractions throughout and round only the final answer to the nearest penny. Give the answer in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£144.06"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) start with £60 paid on 1 Feb, (b) compute the 17 Feb upgrade net charge as (£150 − £60) × 12/28 = 1080/28 ≈ £38.5714, (c) add the £150 paid on 1 Mar, (d) compute the 5 Mar downgrade net credit as (£150 − £30) × 27/31 = 3240/31 ≈ £104.5161, and (e) sum exactly to £60 + 1080/28 + £150 − 3240/31 ≈ £144.0553, rounding to £144.06; intermediate fractions must be correct."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 360,
+      "notes": "Hard — calculation chain where intermediate errors propagate undetected (mechanism c). Four prorated steps with mixed-month day counts (28 vs 31) and a sign flip on the downgrade. A model that mishandles any single step lands on a wrong total. Top-tier should reliably succeed; mid-tier likely to drop a credit sign or use 30 days for February."
+    }
+  },
+  {
+    "prompt_id": "rea-016",
+    "task_category": "reasoning",
+    "complexity": "hard",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Acme Co's Q2 2025 enterprise discount requires ALL FOUR of the following: (a) the customer is on an annual (not monthly) contract, (b) the customer has 100 or more user seats, (c) the renewal addendum is signed before 30 April 2025, AND (d) the customer has had no support escalations in the 90 days immediately preceding the addendum signing date.\n\nCustomer D's profile: 140 seats; switched from a monthly to an annual contract on 10 March 2025; signed the renewal addendum on 22 April 2025; their most recent support escalation was logged on 25 January 2025. Acme Co's CRM also notes that Customer D recently won an industry innovation award and that their CEO has been in role since 2022.\n\nIs Customer D eligible for the Q2 2025 enterprise discount? Answer with exactly 'Eligible' or 'Not eligible'."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "Not eligible"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) verify conditions a, b, c are met, (b) compute the days between 25 January 2025 and 22 April 2025 as 87 days (6 days remaining in January after the 25th, plus 28 in February, plus 31 in March, plus 22 in April), (c) recognise 87 < 90 so condition d fails, and (d) ignore the irrelevant award and CEO information; conclude not eligible."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 280,
+      "notes": "Hard — combines compound-constraint application (mechanism a) with an irrelevant-information distractor (mechanism d). The 90-day window calculation is the load-bearing step; if the model approximates rather than counts days, or if it stops checking at condition (c), or if it lets the award distract, it returns 'Eligible' incorrectly."
+    }
+  },
+  {
+    "prompt_id": "rea-017",
+    "task_category": "reasoning",
+    "complexity": "hard",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "A Brightline workflow has five tasks with the following durations and dependencies:\n- Task T1: 3 hours, no prerequisites\n- Task T2: 2 hours, requires T1 to be complete\n- Task T3: 4 hours, requires T1 to be complete\n- Task T4: 1 hour, requires BOTH T2 AND T3 to be complete\n- Task T5: 2 hours, requires T3 to be complete\n\nTwo workers are available. Each worker can do one task at a time, and tasks are not interruptible. Both workers start at 09:00 on Monday. The schedule is optimised so each task starts as soon as its prerequisites are complete and a worker is free.\n\nAt what time does Task T4 complete? Use 24-hour format HH:MM."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "17:00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) place T1 from 09:00-12:00 on one worker (the other idle as nothing else can start), (b) start T2 (12:00-14:00) and T3 (12:00-16:00) in parallel on the two workers once T1 completes, (c) recognise T4 needs BOTH T2 (done 14:00) and T3 (done 16:00) so T4 cannot start until 16:00, and (d) conclude T4 completes at 16:00 + 1h = 17:00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 240,
+      "notes": "Hard — workflow planning with compound dependencies (mechanism a). T5 is included as irrelevant information (mechanism d). The trap: a model may compute T4 from T2's completion only (14:00 + 1h = 15:00) rather than max(T2, T3) + 1h."
+    }
+  },
+  {
+    "prompt_id": "rea-018",
+    "task_category": "reasoning",
+    "complexity": "hard",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Customer A's cart at Acme Co has a subtotal of £400 excluding VAT. The customer is entitled to: (a) a 12% loyalty discount, (b) a £30 fixed-amount voucher, and (c) free shipping (which would otherwise have been a £15 add-on line).\n\nAcme Co's policy for combining these:\n1. The 12% loyalty discount is applied first, reducing the ex-VAT subtotal.\n2. UK VAT of 20% is then applied to the post-discount ex-VAT subtotal.\n3. The £30 voucher is then deducted from the VAT-inclusive amount.\n4. Free shipping means no shipping line is added — it is not deducted from the cart total.\n\nWhat is the final amount Customer A pays? Give the answer in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "£392.40"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must apply the four steps in the stated order: (a) £400 × 0.88 = £352, (b) £352 × 1.20 = £422.40, (c) £422.40 − £30 = £392.40, and (d) free shipping does not change the total. Final answer £392.40."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 250,
+      "notes": "Hard — compound-constraint calculation (mechanism a) with order-dependent operations and a distractor (free shipping). A model that applies VAT before the loyalty discount, or treats free shipping as a £15 deduction, lands on a different answer."
+    }
+  },
+  {
+    "prompt_id": "rea-019",
+    "task_category": "reasoning",
+    "complexity": "hard",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Acme Co is selecting one of three SaaS vendors for its analytics platform. The same SLA mechanic applies to all three: each vendor commits to a monthly uptime percentage, and if a calendar month's actual uptime falls below the commit, the customer receives an SLA credit of N% of the monthly base fee for each full 0.1 percentage point of shortfall. If uptime meets or exceeds the commit, no credit applies. Treat each vendor's historical 12-month uptime as the best estimator for next year, applied uniformly to every month.\n\nVendor A (Greendot)\n- Annual base cost: £12,000 (covers 5 included user seats)\n- Additional user seats: £40 per seat per month (billed separately, not subject to SLA credits)\n- Uptime commit: 99.5%; credit rate 10% per 0.1pp shortfall\n- Historical 12-month uptime: 99.3%\n\nVendor B (Bluestone)\n- Annual base cost: £14,400 (covers 10 included user seats)\n- Additional user seats: £30 per seat per month (billed separately, not subject to SLA credits)\n- Uptime commit: 99.9%; credit rate 5% per 0.1pp shortfall\n- Historical 12-month uptime: 99.95%\n\nVendor C (Coralwave)\n- Annual base cost: £10,800 (covers 8 included user seats)\n- Additional user seats: £35 per seat per month (billed separately, not subject to SLA credits)\n- Uptime commit: 99.0%; credit rate 15% per 0.1pp shortfall\n- Historical 12-month uptime: 98.7%\n\nAcme Co requires 12 user seats and has a procurement policy that excludes any vendor whose historical 12-month uptime is below 99.0%, regardless of cost or other factors.\n\nCompute, for each ELIGIBLE vendor, the expected effective annual cost defined as: annual base cost + total additional-seat cost over 12 months − total expected SLA credits over 12 months. Which eligible vendor has the lowest expected effective annual cost? Give the vendor name and the expected effective annual cost in pounds and pence."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "Greendot, £12,960.00"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) apply the procurement floor and exclude Coralwave (98.7% < 99.0%), reasoning only over Greendot and Bluestone; (b) for Greendot, compute extra-seat cost as 7 × £40 × 12 = £3,360, recognise the 0.2pp shortfall = 2 full 0.1pp blocks, compute the monthly SLA credit as 2 × 10% × £1,000 = £200 and annual credit as £2,400, giving expected effective £12,000 + £3,360 − £2,400 = £12,960; (c) for Bluestone, recognise 99.95% ≥ 99.9% commit means NO SLA credit applies, compute extra-seat cost as 2 × £30 × 12 = £720, giving expected effective £14,400 + £720 = £15,120; (d) compare and select Greendot at £12,960.00."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 420,
+      "notes": "Hard — multi-criteria selection with compound conditional checks (mechanism a + b). Three independent failure modes: (1) skipping the eligibility floor and including Coralwave (which has the lowest base cost and would mislead a model that compares headline numbers); (2) computing a phantom SLA credit for Bluestone despite uptime exceeding commit (the conditional must trigger only on shortfall, not on every entry); (3) omitting extra-seat costs and comparing base costs alone. Top-tier should sequence the eligibility check first then handle the conditional credit logic; mid-tier likely to miss at least one of the three checks."
+    }
+  },
+  {
+    "prompt_id": "rea-020",
+    "task_category": "reasoning",
+    "complexity": "hard",
+    "input": {
+      "system": "You are solving a multi-step reasoning problem. Read the scenario carefully. Work through the reasoning step by step in plain text, then state the final answer. Respond with ONLY a JSON object: {\"reasoning\": <your step-by-step reasoning as plain text>, \"final_answer\": <the final answer, as concise as possible>}. Do not include any other text.",
+      "user": "Four colleagues — Alex, Bea, Cam, and Dan — each work in exactly one of four offices (London, Paris, Madrid, Rome) and each has exactly one primary working language (English, French, Spanish, Italian). Each office and each language is assigned to exactly one person.\n\nClues:\n1. Bea works in Madrid.\n2. The person who works in London speaks English as their primary language.\n3. Cam speaks Italian as their primary language.\n4. Alex does not work in Rome.\n5. Dan, who enjoys road cycling at the weekend, works in Paris.\n6. The person who works in Madrid speaks Spanish as their primary language.\n\nWhat is Dan's primary language? Answer with exactly one of 'English', 'French', 'Spanish', or 'Italian'."
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {
+          "final_answer": "French"
+        }
+      },
+      "tier_2_judge": {
+        "criteria": "Reasoning must (a) use clues 1 and 5 to fix Bea = Madrid, Dan = Paris, (b) use clue 4 (Alex ≠ Rome) with the remaining offices to place Alex = London and Cam = Rome, (c) use clues 2 and 3 to assign Alex = English and Cam = Italian, (d) use clue 6 to assign Bea = Spanish, (e) conclude Dan = French by elimination, ignoring the irrelevant cycling detail."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 240,
+      "notes": "Hard — constraint satisfaction across two attribute dimensions (office, language) with one irrelevant clue (cycling) as a distractor (mechanism d). Tests whether the model can chain multiple deductions and ignore noise. Mid-tier models often skip verifying that all constraints are simultaneously satisfied."
+    }
+  }
+]

@@ -4,7 +4,7 @@
     "task_category": "customer_support",
     "complexity": "easy",
     "input": {
-      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object of the form: {\"category\": one of \"billing\", \"technical\", \"feature_request\", \"complaint\", \"other\", \"reply\": a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes}. Do not include any other text.",
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
       "user": "Hi, I just got my latest invoice from Acme Co for £150 but my plan is supposed to be £99 per month. Can you check what the extra £51 is for? My account is under customer@example.com. Thanks, Customer A"
     },
     "scoring": {
@@ -25,7 +25,7 @@
     "task_category": "customer_support",
     "complexity": "medium",
     "input": {
-      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object of the form: {\"category\": one of \"billing\", \"technical\", \"feature_request\", \"complaint\", \"other\", \"reply\": a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes}. Do not include any other text.",
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
       "user": "Hello, I've been trying to integrate the Acme Co webhook API into our internal workflow for the past two days and the test events keep arriving with malformed JSON — specifically the `timestamp` field comes through as a string in some events and a Unix integer in others, which is breaking our parser. We're on the standard plan, account customer@example.com. This is blocking a release we have scheduled for tomorrow morning. Could someone from engineering take a look? — Customer A"
     },
     "scoring": {
@@ -46,7 +46,7 @@
     "task_category": "customer_support",
     "complexity": "hard",
     "input": {
-      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object of the form: {\"category\": one of \"billing\", \"technical\", \"feature_request\", \"complaint\", \"other\", \"reply\": a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes}. Do not include any other text.",
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
       "user": "To whom it may concern. I have been a customer of Acme Co for over four years and over the last six months the service has noticeably degraded. The dashboard takes 8-12 seconds to load most mornings, the export-to-CSV button silently fails about one in three attempts, and when I raised a ticket on 12 March the reply came back two weeks later with a templated apology and no concrete action. I am not asking for compensation but I am letting you know that the team here is actively evaluating moving to a competitor. — Customer A, customer@example.com"
     },
     "scoring": {
@@ -60,6 +60,363 @@
     "metadata": {
       "input_tokens_approx": 200,
       "notes": "Escalated multi-issue email. Designed to test disambiguation between 'complaint' and 'technical'/'feature_request'. Expected: 'complaint' because the customer is expressing dissatisfaction holistically rather than requesting a specific fix or feature."
+    }
+  },
+  {
+    "prompt_id": "cs-004",
+    "task_category": "customer_support",
+    "complexity": "easy",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "hey can someone help me update the card on file my old one expired last week account is customer@example.com — Customer B"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "billing"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the request and indicates the team will follow up on payment-method update without committing to a specific process or timeline."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 35,
+      "notes": "Easy: messy real-customer-email pattern — all lowercase, no punctuation, no greeting, em-dash signoff. Tests classification robustness on production-style noisy input. Category is unambiguously billing."
+    }
+  },
+  {
+    "prompt_id": "cs-005",
+    "task_category": "customer_support",
+    "complexity": "easy",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hello, my login keeps failing on the Acme Co web app. I get an 'invalid credentials' error even after resetting my password twice. Account: customer@example.com. — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "technical"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the login issue and indicates investigation without asserting a cause or promising a specific resolution."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 45,
+      "notes": "Plain technical issue (login failure); unambiguous technical category."
+    }
+  },
+  {
+    "prompt_id": "cs-006",
+    "task_category": "customer_support",
+    "complexity": "easy",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi team, would it be possible to add a dark mode toggle to the Acme Co dashboard? My eyes really suffer in the evenings. Thanks! — Customer B, customer@example.com"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "feature_request"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the suggestion and indicates it will be passed to the product team without promising it will be built."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 40,
+      "notes": "Clear, friendly feature request; obvious category."
+    }
+  },
+  {
+    "prompt_id": "cs-007",
+    "task_category": "customer_support",
+    "complexity": "easy",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Honestly really fed up. Waited like 45 mins on chat yesteday and noone picked up?? Im paying customer too. customer@example.com - Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "complaint"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the poor experience and signals it will be looked into without making promises about response times or compensation."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 40,
+      "notes": "Easy: messy real-customer-email pattern — typo ('yesteday'), missing apostrophe ('Im'), run-on punctuation ('??'), missing space in 'noone'. Tests classification robustness under typing noise. Category is unambiguously complaint."
+    }
+  },
+  {
+    "prompt_id": "cs-008",
+    "task_category": "customer_support",
+    "complexity": "easy",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi, the Acme Co mobile app crashes on launch on my Android phone since this morning's update. Reinstalling didn't help. Account customer@example.com. — Customer B"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "technical"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the crash report and indicates the team will investigate without confirming a cause or promising a fix timeline."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 40,
+      "notes": "Plain mobile-app crash report; unambiguous technical category."
+    }
+  },
+  {
+    "prompt_id": "cs-009",
+    "task_category": "customer_support",
+    "complexity": "easy",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi please cancle my subscription effective end of this billing period. Account is customer@example.com.\n\nSent from my phone — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "billing"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the cancellation request and indicates the team will action it through the normal process without confirming the cancellation has happened."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 40,
+      "notes": "Easy: messy real-customer-email pattern — autocorrect-style typo ('cancle'), mobile signature ('Sent from my phone'), terse phrasing. Tests classification robustness on mobile-typed input. Cancellation is a billing/account-lifecycle action; category is unambiguously billing."
+    }
+  },
+  {
+    "prompt_id": "cs-010",
+    "task_category": "customer_support",
+    "complexity": "medium",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi Acme Co support, my Acme Co trial seems to have ended early — I signed up on 1 April expecting 30 days free but I was charged on the 21st. Account customer@example.com. Can you check what happened? — Customer B"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "billing"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the unexpected early trial-end and the resulting charge, and indicates someone will investigate without asserting that the trial period was correctly applied or wrongly truncated."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 70,
+      "notes": "Medium billing pattern beyond the typical invoice/charge cluster — a trial-lifecycle confusion. Category is billing because the actionable issue is the unexpected charge."
+    }
+  },
+  {
+    "prompt_id": "cs-011",
+    "task_category": "customer_support",
+    "complexity": "medium",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi Acme Co team, I'm getting 429 responses from the API even though I'm well below the documented 1000 requests/minute rate limit on the Pro plan. I'm seeing the limit kick in around 200-300 requests/minute. Is the documentation out of date or is there a separate per-endpoint limit I'm missing? Account customer@example.com. — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "technical"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the rate-limit discrepancy and the documentation question, and indicates someone will investigate without asserting whether the docs are wrong or whether a separate per-endpoint limit exists."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 90,
+      "notes": "Medium technical pattern beyond the typical UI-bug/login cluster — an API behaviour-versus-docs question. Category is technical because the substance is unexpected platform behaviour."
+    }
+  },
+  {
+    "prompt_id": "cs-012",
+    "task_category": "customer_support",
+    "complexity": "medium",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi Acme Co team, we'd really benefit from being able to assign multiple owners to a single project rather than just one. Right now we work around it by sharing a generic login which isn't ideal from a security or audit perspective. Is this something on the roadmap, and if not, can it be considered? — Customer B, customer@example.com"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "feature_request"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the suggestion and the underlying use case, and indicates it will be shared with product without promising delivery or a roadmap position."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 85,
+      "notes": "Feature request with workaround context; classified as feature_request despite mild frustration tone."
+    }
+  },
+  {
+    "prompt_id": "cs-013",
+    "task_category": "customer_support",
+    "complexity": "medium",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "I'm writing to formally complain about how my last support ticket was handled. The agent closed the ticket without actually resolving the issue and the follow-up email I sent five days ago still hasn't been answered. This isn't the first time. Account customer@example.com. — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "complaint"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the dissatisfaction with prior handling and signals a serious internal review without promising a specific outcome or apportioning blame."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 75,
+      "notes": "Process complaint about support quality; classified as complaint, not technical."
+    }
+  },
+  {
+    "prompt_id": "cs-014",
+    "task_category": "customer_support",
+    "complexity": "medium",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hello, under UK GDPR I'd like to request a copy of all personal data Acme Co holds about me, including any data shared with third-party processors. Account customer@example.com. Please confirm receipt and the timeline for response. — Customer B"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "other"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the data subject access request and indicates it will be routed to the appropriate team without committing to a specific timeline or scope."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 70,
+      "notes": "GDPR/DSAR request — not billing, technical, feature, or complaint; 'other' is the correct bucket."
+    }
+  },
+  {
+    "prompt_id": "cs-015",
+    "task_category": "customer_support",
+    "complexity": "medium",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hey Acme Co, would you consider exposing the user-activity audit log via API rather than only in the web UI? We need to pipe it into our SIEM for compliance and right now we're scraping HTML which is fragile. Account customer@example.com. Thanks — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "feature_request"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the request and the compliance use case, and indicates it will be shared with product without promising it will ship."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 70,
+      "notes": "Feature request from an integrator with a concrete compliance driver; classified as feature_request."
+    }
+  },
+  {
+    "prompt_id": "cs-016",
+    "task_category": "customer_support",
+    "complexity": "hard",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi Acme Co, I'm looking at this month's invoice and I was charged twice for the same subscription — once at 02:14 and again at 02:16, same card, same amount. Looking at the timestamps it really looks like your billing job retried after a transient failure and didn't dedupe on the idempotency key (we've seen this exact pattern in other Stripe-backed systems). I don't actually mind waiting for the refund, but you almost certainly have other customers hit by the same bug today and may not know it yet. Account customer@example.com. — Customer B"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "billing"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the duplicate charge on the customer's account and signals the report will be looked into, without confirming a systemic bug exists or promising a refund or fix."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 130,
+      "notes": "Hard: reads partly like a technical bug report (idempotency key, retry behaviour, suggestion that other customers are affected), but the actionable issue for this customer is a duplicate charge on their invoice. Dominant theme is the billing impact on the customer's own account, so 'billing' is correct over 'technical'."
+    }
+  },
+  {
+    "prompt_id": "cs-017",
+    "task_category": "customer_support",
+    "complexity": "hard",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi Acme Co, reporting what I think is a bug. When I navigate to the Billing > Invoices page, half the time the page renders blank and I have to refresh two or three times before the invoice list appears. This has been happening since around the start of April on both my laptop and my colleague's. It's frustrating because I'm trying to download invoices for our quarter-end and I keep losing time to it. Browser is the latest Chrome on macOS. Account customer@example.com. — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "technical"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the rendering bug, the reproduction context, and the time pressure, and indicates engineering will investigate without confirming the cause or promising a fix timeline."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 110,
+      "notes": "Hard: surface mentions billing page and frustration, but the substance is a reproducible UI bug with reproduction details. Dominant theme is the technical defect, so 'technical' is correct over 'billing' or 'complaint'."
+    }
+  },
+  {
+    "prompt_id": "cs-018",
+    "task_category": "customer_support",
+    "complexity": "hard",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Honestly I'm getting fed up with how clunky bulk-editing tags is in Acme Co. Every time I try to retag more than ~50 items I have to do it one by one because there's no select-all-and-apply. Other tools we use have had this for years. I'm not asking for a refund, I'm asking: please build a proper bulk-edit flow. Account customer@example.com. — Customer B"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "feature_request"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges both the frustration and the specific feature being requested, and indicates the suggestion will be shared with product without promising delivery."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 95,
+      "notes": "Hard: tone reads like a complaint ('fed up', 'clunky', competitor comparison) but the customer explicitly states what they want built. Dominant theme is the requested capability, so 'feature_request' is correct over 'complaint'."
+    }
+  },
+  {
+    "prompt_id": "cs-019",
+    "task_category": "customer_support",
+    "complexity": "hard",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hi Acme Co support team, a few things in one email so apologies in advance. (1) Last week's invoice shows a £20 line item labelled 'API overage' that I don't understand — we don't think we exceeded any quota. (2) The two-factor SMS codes have been arriving 5-10 minutes late which is making logins painful. (3) It would also be amazing if you added a CSV import for contacts. None of these on its own is a big deal but together it's been a rough month and I wanted to flag the overall experience honestly. Account customer@example.com. — Customer A"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "complaint"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges that multiple issues were raised and signals the overall experience is being taken seriously, without committing to specific outcomes on any one item or promising compensation."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 145,
+      "notes": "Hard: a multi-issue email containing one billing, one technical, and one feature_request item. The customer's framing ('rough month', 'overall experience') makes the dominant theme dissatisfaction with the holistic experience rather than any individual item, so 'complaint' is the correct top-level classification. Note that production routing systems may legitimately route this to billing or technical first based on actionability — where models choose those classifications, treat as legitimately contestable rather than scoring as wrong."
+    }
+  },
+  {
+    "prompt_id": "cs-020",
+    "task_category": "customer_support",
+    "complexity": "hard",
+    "input": {
+      "system": "You are a customer support classifier. Read the customer email and respond ONLY with a JSON object. The object must have exactly two fields. The \"category\" field must be exactly one of: \"billing\", \"technical\", \"feature_request\", \"complaint\", or \"other\". The \"reply\" field must be a 2-sentence acknowledgement that confirms receipt and indicates investigation without committing to specific outcomes. Output the JSON object with no other text.",
+      "user": "Hello — I'm reaching out from a vendor partner. We supply enterprise SSO middleware and after seeing Acme Co's recent product update we believe there's a strong fit for a partnership. I appreciate this isn't a normal support ticket and I've struggled to find a partnerships address on your site, which is itself a bit of a gap. Is there someone you can route this to? Happy to share materials. — Customer B, customer@example.com"
+    },
+    "scoring": {
+      "tier_1_deterministic": {
+        "expected": {"category": "other"}
+      },
+      "tier_2_judge": {
+        "criteria": "Reply acknowledges the message and indicates it will be routed to the appropriate team without committing to a partnership conversation, and without treating the offhand 'gap' remark as a formal complaint."
+      }
+    },
+    "metadata": {
+      "input_tokens_approx": 105,
+      "notes": "Hard: an off-topic vendor partnership pitch that contains a mild jab ('a bit of a gap') which could trigger a 'complaint' misclassification. The substance is neither a support issue nor product feedback from a customer — it's an inbound business enquiry, so 'other' is correct."
     }
   }
 ]
