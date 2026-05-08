@@ -75,3 +75,26 @@ CREATE INDEX IF NOT EXISTS idx_results_prompt ON results(prompt_id);
 CREATE INDEX IF NOT EXISTS idx_results_model ON results(model);
 CREATE INDEX IF NOT EXISTS idx_results_lever ON results(optimisation_lever);
 CREATE INDEX IF NOT EXISTS idx_results_run ON results(run_id);
+
+-- Batch jobs: one row per submitted batch. Submit (Day 7) writes pending; retrieve
+-- (Day 8) updates status and pulls per-prompt results into the results table. The
+-- split lets the orchestrator survive script restarts during the 1–24h provider-side
+-- batch queue without losing batch_id state and forfeiting the batch discount on
+-- re-submission. See methodology doc § "Day 6+ orchestration".
+CREATE TABLE IF NOT EXISTS batch_jobs (
+    batch_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    provider TEXT NOT NULL,           -- 'anthropic' / 'openai'
+    model TEXT NOT NULL,
+    lever TEXT NOT NULL,              -- 'baseline' for the Day 7 batch sweep
+    status TEXT NOT NULL,             -- 'submitted' / 'in_progress' / 'completed' / 'failed' / 'expired'
+    submitted_at TEXT NOT NULL,
+    retrieved_at TEXT,
+    completed_at TEXT,
+    prompt_ids TEXT NOT NULL,         -- JSON array of prompt_ids included in this batch
+    request_count INTEGER NOT NULL,
+    error TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_run ON batch_jobs(run_id);
+CREATE INDEX IF NOT EXISTS idx_batch_jobs_status ON batch_jobs(status);
