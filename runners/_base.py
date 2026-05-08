@@ -57,6 +57,8 @@ class ProviderAdapter(Protocol):
         self,
         client: Any, prompt: Prompt, model: str,
         max_tokens: int, max_retries: int, base_delay: float,
+        *,
+        optimisation_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
 
@@ -171,6 +173,7 @@ def _new_row(
         "input_tokens": 0,
         "output_tokens": 0,
         "cached_tokens": 0,
+        "cache_creation_tokens": 0,
         "latency_ms": 0,
         "cost_usd": 0.0,
         "response_text": "",
@@ -269,6 +272,7 @@ def run_one(
         m = adapter.call_with_retry(
             client, prompt, model,
             max_tokens=max_tokens, max_retries=max_retries, base_delay=base_delay,
+            optimisation_config=optimisation_config,
         )
     except adapter.rate_limit_error as e:
         _release_reservation(run_id=run_id, estimated_gbp=est_gbp, db_path=db_path)
@@ -279,7 +283,12 @@ def run_one(
             conn.commit()
         return {**row, "skipped": False}
 
-    cost_usd = estimate_cost_usd(model, m["input_tokens"], m["output_tokens"], m["cached_tokens"])
+    cache_creation_tokens = m.get("cache_creation_tokens", 0) or 0
+    cost_usd = estimate_cost_usd(
+        model, m["input_tokens"], m["output_tokens"],
+        cached_tokens=m["cached_tokens"],
+        cache_creation_tokens=cache_creation_tokens,
+    )
     cost_gbp = usd_to_gbp(cost_usd)
     _reconcile_actual(
         run_id=run_id, estimated_gbp=est_gbp, actual_gbp=cost_gbp, db_path=db_path,
@@ -288,6 +297,7 @@ def run_one(
         "input_tokens": m["input_tokens"],
         "output_tokens": m["output_tokens"],
         "cached_tokens": m["cached_tokens"],
+        "cache_creation_tokens": cache_creation_tokens,
         "latency_ms": m["latency_ms"],
         "cost_usd": cost_usd,
         "response_text": m["response_text"],

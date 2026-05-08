@@ -1,11 +1,10 @@
-"""Anthropic provider runner.
+"""OpenAI provider runner.
 
-Provides Anthropic-specific bits — input-token counting via count_tokens API
-(char-count fallback), the raw API call, retry-on-429 with Retry-After
-honoured, and the AnthropicAdapter wiring those into the provider-agnostic
-core in `runners._base`. Public `run_one` / `run_many` / `start_run` are
-thin wrappers so callers (and existing tests) see the same surface as
-before the refactor.
+Provides OpenAI-specific bits — input-token counting via tiktoken (OpenAI
+has no count_tokens API), the raw chat-completions call, retry-on-429 with
+Retry-After honoured, and the OpenAIAdapter wiring those into the
+provider-agnostic core in `runners._base`. Public `run_one` / `run_many` /
+`start_run` are thin wrappers.
 """
 
 from __future__ import annotations
@@ -16,7 +15,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-import anthropic
+import openai
+import tiktoken
 from dotenv import load_dotenv
 
 from runners import _base
@@ -35,95 +35,100 @@ from runners._base import (
 from runners.budget import CostCapExceeded, usd_to_gbp
 from runners.schema import Prompt, load_prompts
 
-PROVIDER = "anthropic"
+PROVIDER = "openai"
 
-# Per-provider input-token cache. Keys are (prompt_id, model). Concurrent
-# dict reads/writes are OK in CPython for this purpose — duplicate
-# count_tokens calls are harmless.
+# Per-provider input-token cache. Keys are (prompt_id, model).
 _input_token_cache: dict[tuple[str, str], int] = {}
 
+# tiktoken encoder cache — encoders are heavy to construct.
+_encoder_cache: dict[str, Any] = {}
 
-def count_input_tokens(client: anthropic.Anthropic, prompt: Prompt, model: str) -> int:
-    """Count input tokens for the cap pre-check.
+# Chat-envelope token overhead. Each chat message adds ~3 tokens of role-tag
+# wrapping that tiktoken's raw text encoding doesn't account for; with 2
+# messages (system + user) plus the assistant turn marker, ~9-10 tokens of
+# fixed overhead. Slightly pessimistic is fine for the cap pre-check.
+_CHAT_ENVELOPE_OVERHEAD = 10
 
-    Primary: client.beta.messages.count_tokens (free, server-side, exact).
-    Fallback: char count at ~4 chars/token (English average).
+
+def _get_encoder(model: str):
+    """Return a tiktoken encoder for the model. Falls back to o200k_base
+    (the GPT-4o-family default) for unknown model names."""
+    if model not in _encoder_cache:
+        try:
+            _encoder_cache[model] = tiktoken.encoding_for_model(model)
+        except KeyError:
+            _encoder_cache[model] = tiktoken.get_encoding("o200k_base")
+    return _encoder_cache[model]
+
+
+def count_input_tokens(client: openai.OpenAI, prompt: Prompt, model: str) -> int:
+    """Count input tokens for the cap pre-check via tiktoken locally.
+
+    Falls back to char count at ~4 chars/token if tiktoken errors. The
+    `client` argument is unused but kept for parity with the Anthropic
+    adapter's signature so the ProviderAdapter Protocol stays clean.
     """
     cache_key = (prompt.prompt_id, model)
     if cache_key in _input_token_cache:
         return _input_token_cache[cache_key]
     try:
-        result = client.beta.messages.count_tokens(
-            model=model,
-            system=prompt.input.system,
-            messages=[{"role": "user", "content": prompt.input.user}],
+        enc = _get_encoder(model)
+        n = (
+            len(enc.encode(prompt.input.system))
+            + len(enc.encode(prompt.input.user))
+            + _CHAT_ENVELOPE_OVERHEAD
         )
-        n = int(result.input_tokens)
     except Exception:
         n = max(1, (len(prompt.input.system) + len(prompt.input.user)) // 4)
     _input_token_cache[cache_key] = n
     return n
 
 
-def call_anthropic(
-    client: anthropic.Anthropic,
+def call_openai(
+    client: openai.OpenAI,
     prompt: Prompt,
     model: str,
     max_tokens: int = DEFAULT_MAX_TOKENS,
-    *,
-    enable_cache: bool = False,
 ) -> dict[str, Any]:
-    """Single Anthropic API call.
-
-    When `enable_cache=True`, wraps the user message text in a content block
-    with `cache_control: {"type": "ephemeral"}`. Per Anthropic's caching docs,
-    cache_control marks a cache breakpoint covering everything from the start
-    of the prompt up to and including the breakpoint — putting it on the user
-    message body caches system + user (the deterministic prefix), which is
-    the load-bearing portion for our test prompts.
-    """
-    if enable_cache:
-        messages = [{
-            "role": "user",
-            "content": [{
-                "type": "text",
-                "text": prompt.input.user,
-                "cache_control": {"type": "ephemeral"},
-            }],
-        }]
-    else:
-        messages = [{"role": "user", "content": prompt.input.user}]
-
     started = time.perf_counter()
-    resp = client.messages.create(
+    resp = client.chat.completions.create(
         model=model,
         max_tokens=max_tokens,
         temperature=0,
-        system=prompt.input.system,
-        messages=messages,
+        messages=[
+            {"role": "system", "content": prompt.input.system},
+            {"role": "user", "content": prompt.input.user},
+        ],
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
-    # TODO(Day 9): Tier 1 scorer must defensively strip markdown fences from
-    # response_text before JSON parsing. Sonnet 4.6 wraps JSON in ```json ```
-    # despite system-prompt instructions to "respond ONLY with a JSON object".
-    response_text = "".join(b.text for b in resp.content if b.type == "text")
+    response_text = resp.choices[0].message.content or ""
+    # OpenAI surfaces cache hits via usage.prompt_tokens_details.cached_tokens.
+    # Field may be absent on older API versions; default to 0.
+    cached = 0
+    details = getattr(resp.usage, "prompt_tokens_details", None) if resp.usage else None
+    if details is not None:
+        cached = getattr(details, "cached_tokens", 0) or 0
     return {
         "response_text": response_text,
-        # Anthropic's input_tokens already excludes cached + cache-creation tokens
-        # (those are billed and reported separately). No subtraction needed here.
-        "input_tokens": resp.usage.input_tokens,
-        "output_tokens": resp.usage.output_tokens,
-        "cached_tokens": getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
-        "cache_creation_tokens": getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
+        # Normalised input_tokens = UNCACHED portion. OpenAI's resp.usage.prompt_tokens
+        # INCLUDES cached tokens; we subtract here so estimate_cost_usd's
+        # (input_tokens × base + cached_tokens × cache_read_mult) formula matches the
+        # provider's actual billing without double-counting.
+        "input_tokens": resp.usage.prompt_tokens - cached,
+        "output_tokens": resp.usage.completion_tokens,
+        "cached_tokens": cached,
+        # OpenAI does not expose or separately bill cache creation; always 0.
+        "cache_creation_tokens": 0,
         "model_version": resp.model,
         "latency_ms": latency_ms,
     }
 
 
-def _retry_after_seconds(err: anthropic.RateLimitError) -> float | None:
-    if err.response is None:
+def _retry_after_seconds(err: openai.RateLimitError) -> float | None:
+    response = getattr(err, "response", None)
+    if response is None:
         return None
-    val = err.response.headers.get("retry-after")
+    val = response.headers.get("retry-after")
     if val is None:
         return None
     try:
@@ -132,24 +137,22 @@ def _retry_after_seconds(err: anthropic.RateLimitError) -> float | None:
         return None
 
 
-def call_anthropic_with_retry(
-    client: anthropic.Anthropic,
+def call_openai_with_retry(
+    client: openai.OpenAI,
     prompt: Prompt,
     model: str,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     *,
     max_retries: int = DEFAULT_MAX_RETRIES,
     base_delay: float = DEFAULT_BASE_DELAY,
-    enable_cache: bool = False,
 ) -> dict[str, Any]:
-    """Wraps call_anthropic with exponential-backoff retry on 429s.
-    Honors Retry-After when present; otherwise base_delay × 2^attempt + jitter.
-    `enable_cache` is plumbed through to call_anthropic for the caching lever."""
-    last_err: anthropic.RateLimitError | None = None
+    """Wraps call_openai with exponential-backoff retry on 429s.
+    Honors Retry-After when present; otherwise base_delay × 2^attempt + jitter."""
+    last_err: openai.RateLimitError | None = None
     for attempt in range(max_retries + 1):
         try:
-            return call_anthropic(client, prompt, model, max_tokens=max_tokens, enable_cache=enable_cache)
-        except anthropic.RateLimitError as e:
+            return call_openai(client, prompt, model, max_tokens=max_tokens)
+        except openai.RateLimitError as e:
             last_err = e
             if attempt == max_retries:
                 break
@@ -163,39 +166,34 @@ def call_anthropic_with_retry(
     raise last_err
 
 
-class _AnthropicAdapter:
-    """Wires Anthropic-specific bits into the provider-agnostic core in _base."""
+class _OpenAIAdapter:
+    """Wires OpenAI-specific bits into the provider-agnostic core in _base."""
 
     name = PROVIDER
-    rate_limit_error = anthropic.RateLimitError
+    rate_limit_error = openai.RateLimitError
 
-    def make_client(self) -> anthropic.Anthropic:
-        # max_retries=0 disables the SDK's own retry loop so this layer
-        # is the single source of truth for 429 handling.
-        return anthropic.Anthropic(max_retries=0)
+    def make_client(self) -> openai.OpenAI:
+        return openai.OpenAI(max_retries=0)
 
-    def count_input_tokens(self, client: anthropic.Anthropic, prompt: Prompt, model: str) -> int:
-        # Delegates to the module-level function so monkeypatching
-        # `runners.run_anthropic.count_input_tokens` continues to work.
+    def count_input_tokens(self, client: openai.OpenAI, prompt: Prompt, model: str) -> int:
         return count_input_tokens(client, prompt, model)
 
     def call_with_retry(
-        self, client: anthropic.Anthropic, prompt: Prompt, model: str,
+        self, client: openai.OpenAI, prompt: Prompt, model: str,
         max_tokens: int, max_retries: int, base_delay: float,
         *,
         optimisation_config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # Caching lever opts in via optimisation_config={"enable_cache": True}
-        # (set by lever_caching for both write and read phases).
-        enable_cache = bool((optimisation_config or {}).get("enable_cache", False))
-        return call_anthropic_with_retry(
+        # OpenAI's prompt caching is automatic and requires no opt-in; the
+        # optimisation_config is ignored here. The lever still exercises caching
+        # on this provider by virtue of making repeated calls within the cache TTL.
+        return call_openai_with_retry(
             client, prompt, model,
             max_tokens=max_tokens, max_retries=max_retries, base_delay=base_delay,
-            enable_cache=enable_cache,
         )
 
 
-ANTHROPIC_ADAPTER = _AnthropicAdapter()
+OPENAI_ADAPTER = _OpenAIAdapter()
 
 
 def run_one(
@@ -213,10 +211,10 @@ def run_one(
     max_retries: int = DEFAULT_MAX_RETRIES,
     base_delay: float = DEFAULT_BASE_DELAY,
     db_path: Path = DB_PATH,
-    client: anthropic.Anthropic | None = None,
+    client: openai.OpenAI | None = None,
 ) -> dict[str, Any]:
     return _base.run_one(
-        ANTHROPIC_ADAPTER, prompt, model, lever,
+        OPENAI_ADAPTER, prompt, model, lever,
         run_id=run_id, cap_gbp=cap_gbp, completed=completed, planned=planned,
         optimisation_config=optimisation_config, force_new_attempt=force_new_attempt,
         max_tokens=max_tokens, max_retries=max_retries, base_delay=base_delay,
@@ -240,7 +238,7 @@ def run_many(
     concurrency: int | None = None,
 ) -> list[dict[str, Any]]:
     return _base.run_many(
-        ANTHROPIC_ADAPTER, prompts, model, lever,
+        OPENAI_ADAPTER, prompts, model, lever,
         run_id=run_id, cap_gbp=cap_gbp,
         optimisation_config=optimisation_config, force_new_attempt=force_new_attempt,
         max_tokens=max_tokens, max_retries=max_retries, base_delay=base_delay,
@@ -249,7 +247,7 @@ def run_many(
 
 
 if __name__ == "__main__":
-    """Test driver. Args: <cap_gbp> <n_prompts> [offset] [--force]."""
+    """Day 5 OpenAI smoke driver. Args: <cap_gbp> <n_prompts> [offset] [--force]."""
     load_dotenv(REPO_ROOT / ".env")
     cap = float(sys.argv[1]) if len(sys.argv) > 1 else 300.0
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 1
@@ -267,7 +265,7 @@ if __name__ == "__main__":
     print(f"run_id={rid} cap=£{cap:.4f} n={n} offset={offset} force={force} workers={workers}")
     started = time.perf_counter()
     results = run_many(
-        targets, model="claude-sonnet-4-6", lever="baseline",
+        targets, model="gpt-4o", lever="baseline",
         run_id=rid, cap_gbp=cap, force_new_attempt=force,
     )
     wall_ms = int((time.perf_counter() - started) * 1000)

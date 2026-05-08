@@ -5,6 +5,13 @@ and `runs.cost_so_far_gbp` accumulator are all in GBP. Provider per-call costs
 are computed in USD (the provider's native unit) and converted at the boundary.
 The per-row `results.cost_usd` column stays in USD so per-call figures cross-check
 cleanly against provider invoices.
+
+Cache pricing (from Day 5 caching threshold verification, see methodology doc):
+  - Anthropic: cache writes are 1.25× input rate, cache reads are 0.1× input rate
+  - OpenAI: cache reads are 0.5× input rate (per the GPT-4o pricing page); cache
+    creation is not separately billed or surfaced (treated as 1.0× / no premium).
+Each model carries explicit cache_read_mult and cache_creation_mult so the cost
+function stays generic across providers.
 """
 
 from __future__ import annotations
@@ -21,25 +28,23 @@ GBP_USD_RATE: float = 1.27
 # pricing pages before kicking off the full benchmark run.
 PRICING_USD_PER_MTOK: dict[str, dict[str, float]] = {
     # Test set
-    "claude-sonnet-4-6":  {"input": 3.00, "output": 15.00},
-    "claude-haiku-4-5":   {"input": 1.00, "output": 5.00},
-    "gpt-4o":             {"input": 2.50, "output": 10.00},
-    "gpt-4o-mini":        {"input": 0.15, "output": 0.60},
+    "claude-sonnet-4-6":  {"input": 3.00, "output": 15.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.25},
+    "claude-haiku-4-5":   {"input": 1.00, "output":  5.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.25},
+    "gpt-4o":             {"input": 2.50, "output": 10.00, "cache_read_mult": 0.50, "cache_creation_mult": 1.00},
+    "gpt-4o-mini":        {"input": 0.15, "output":  0.60, "cache_read_mult": 0.50, "cache_creation_mult": 1.00},
     # Judges (Day 10)
-    "claude-opus-4-6":    {"input": 15.00, "output": 75.00},
-    "mistral-large-2512": {"input": 2.00, "output": 6.00},
+    "claude-opus-4-6":    {"input": 15.00, "output": 75.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.25},
+    "mistral-large-2512": {"input":  2.00, "output":  6.00, "cache_read_mult": 1.00, "cache_creation_mult": 1.00},
 }
 
 # Per-category output-token estimates for the pre-call cap gate. Each value is
-# sized to include a 30–50% margin over typical observed output for that task,
-# so the gate triggers predictably before overspend rather than chronically
-# after. Not used as the actual API max_tokens parameter — that's set per-lever.
+# sized to include a 30–50% margin over typical observed output for that task.
 OUTPUT_TOKEN_ESTIMATES: dict[str, int] = {
-    "customer_support": 200,  # 2-sentence reply + category in JSON ≈ 50–100 typical
-    "extraction":       300,  # JSON object, varies by schema; line-items hardest
-    "rag_qa":           200,  # answer + supporting_sentences indices ≈ 50–100 typical
-    "summarisation":    400,  # 3 bullets, 1–2 sentences each ≈ 150–250 typical
-    "reasoning":        600,  # explicit reasoning chain + final_answer ≈ 200–500 typical
+    "customer_support": 200,
+    "extraction":       300,
+    "rag_qa":           200,
+    "summarisation":    400,
+    "reasoning":        600,
 }
 DEFAULT_OUTPUT_ESTIMATE: int = 500
 
@@ -57,12 +62,25 @@ def estimate_cost_usd(
     input_tokens: int,
     output_tokens: int,
     cached_tokens: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> float:
-    """Cost in USD from token counts. Cache-discount handling deferred to lever_caching."""
+    """Cost in USD from token counts.
+
+    `input_tokens` here is the UNCACHED portion of the prompt (charged at base
+    rate). `cached_tokens` is the cache-read portion (charged at cache_read_mult).
+    `cache_creation_tokens` is tokens written to cache this call (charged at
+    cache_creation_mult; Anthropic only — always 0 for OpenAI). Each runner is
+    responsible for normalising provider-specific usage shapes into this triple.
+    """
     if model not in PRICING_USD_PER_MTOK:
         raise ValueError(f"unknown model {model!r}; add to PRICING_USD_PER_MTOK before running")
     p = PRICING_USD_PER_MTOK[model]
-    return (input_tokens * p["input"] + output_tokens * p["output"]) / 1_000_000.0
+    return (
+        input_tokens * p["input"]
+        + cached_tokens * p["input"] * p["cache_read_mult"]
+        + cache_creation_tokens * p["input"] * p["cache_creation_mult"]
+        + output_tokens * p["output"]
+    ) / 1_000_000.0
 
 
 def estimate_cost_gbp(
@@ -70,14 +88,33 @@ def estimate_cost_gbp(
     input_tokens: int,
     output_tokens: int,
     cached_tokens: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> float:
-    return usd_to_gbp(estimate_cost_usd(model, input_tokens, output_tokens, cached_tokens))
+    return usd_to_gbp(estimate_cost_usd(model, input_tokens, output_tokens, cached_tokens, cache_creation_tokens))
+
+
+# Per-model minimum cacheable prompt length (tokens). Below this, cache_control
+# is silently ignored by Anthropic / automatic caching does not engage on OpenAI.
+# Used by lever_caching to decide whether to attempt the cache test or record
+# the (model, prompt) as "caching unavailable at this prompt size".
+# Source: methodology doc § "Anthropic prompt-caching minimum lengths" and
+# § "OpenAI prompt-caching specs" (verified 2026-05-04).
+CACHE_MIN_TOKENS: dict[str, int] = {
+    "claude-sonnet-4-6": 2048,
+    "claude-haiku-4-5":  4096,
+    "claude-opus-4-6":   4096,
+    "gpt-4o":            1024,
+    "gpt-4o-mini":       1024,
+}
+
+
+def cache_min_tokens_for(model: str) -> int:
+    """Minimum prompt length at which caching engages for this model.
+    Returns a large number for unknown models so caching is conservatively skipped."""
+    return CACHE_MIN_TOKENS.get(model, 1_000_000)
 
 
 class CostCapExceeded(RuntimeError):
-    """Raised when the next call would breach the GBP cap. Carries enough info
-    for the caller to update runs.status and print the PRD §10 abort message."""
-
     def __init__(self, message: str, *, completed: int, planned: int, cap_gbp: float):
         super().__init__(message)
         self.completed = completed
@@ -97,13 +134,6 @@ def check_cap(
     completed: int,
     planned: int,
 ) -> None:
-    """Raise CostCapExceeded if the next call's upper-bound cost would breach cap.
-
-    Message format pinned to PRD §10: it must be exactly recognisable in stderr
-    so an operator can grep for it. The (e.g. --cost-cap=350) example is from
-    the PRD verbatim — not derived from cap_gbp — to keep the message
-    consistent regardless of the test cap used.
-    """
     if cost_so_far_gbp + estimated_call_gbp_value > cap_gbp:
         msg = (
             f"Cost cap of {_fmt_gbp(cap_gbp)} reached. "

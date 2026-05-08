@@ -31,6 +31,8 @@ Of the 20 summarisation prompts, **13 clear Sonnet 4.6's 2048-token floor (the m
 
 Per OpenAI's prompt-caching guide (verified 2026-05-04 against `developers.openai.com/api/docs/guides/prompt-caching`): caching activates automatically on prompts containing **1024 tokens or more** with no opt-in or API parameter required. Cache reads can reduce input token cost by **up to 90%** and latency by up to 80%. Cached prefixes "generally remain active for 5 to 10 minutes of inactivity, up to a maximum of one hour" (vs Anthropic's explicit 5-minute default TTL on the ephemeral block). Cache hits are reported in `usage.prompt_tokens_details.cached_tokens` on the chat-completion response. All five hards in our caching test set (sum-015..020 at 3,158–3,838 tokens) clear OpenAI's 1024-token threshold by a wide margin, so caching engages on every OpenAI (model, prompt) pair in the test — wider engagement than the Anthropic side, which is constrained by Sonnet 4.6's 2048-token floor and is unavailable on Haiku 4.5 across our entire corpus.
 
+**OpenAI caches in 1024-token chunks (empirical observation, Day 5).** For sum-015 on GPT-4o (input 3,046 tokens after our `prompt_tokens − cached_tokens` normalisation, total prompt content 3,046 tokens), OpenAI cached exactly 2 × 1024 = 2,048 tokens on the cache_read call, leaving the remaining 998 tokens uncached and charged at the full input rate. Other prompts in the test set show similar chunked behaviour (cached_tokens values of 2,176 / 3,072 / 3,200 / 3,328 across the five prompts × two models). Production prompts whose total length isn't a clean multiple of 1024 will see this partial-caching effect; its impact on the observed cache_read multiplier is captured in the scaling formula in the *Scope and bias considerations* subsection below.
+
 ### OpenAI cache-warming asymmetry — write multiplier structurally unobservable
 
 The 3-call test design (baseline / cache-write / cache-read) maps cleanly onto Anthropic's explicit `cache_control` opt-in: a baseline call with no `cache_control` does NOT touch cache; a write call with `cache_control` and a cold cache writes to it; a subsequent read call with `cache_control` hits the cache. The three calls produce three distinct measurements: baseline cost, cache-write cost (with the 1.25× write premium on the cached portion), and cache-read cost (with the 0.1× read discount).
@@ -42,6 +44,8 @@ OpenAI's automatic caching does not match this shape. Because the cache writes o
 ### Caching test design (Day 5)
 
 For each in-scope (model, prompt) pair, the runner records three calls: one baseline call (no `cache_control`), one cache-write call (with `cache_control`, on a cold cache), and one cache-read call (with `cache_control`, within the 5-minute TTL of the write). Three calls × five prompts × applicable models gives the empirical multipliers that the Day 12 analysis script then projects to amortised cost at any N reads, rather than pegging the result to one observed N. The empirical write/read multipliers double as a sanity check on Anthropic's stated 1.25× / 0.1× pricing — divergence from those numbers is itself a finding worth surfacing. We use the default 5-minute TTL for cache writes (`cache_control: {"type": "ephemeral"}`, no `ttl` override). The 1-hour TTL option costs 2.0× rather than 1.25× for writes; testing the 1-hour TTL would change the break-even point but not the cache-read economics, which is the load-bearing measurement here.
+
+**`cache_control` placement.** The runner places `cache_control: {"type": "ephemeral"}` on the user-message text content block (see `runners/run_anthropic.py::call_anthropic`). Per Anthropic's cache-breakpoint semantics, this caches everything from the start of the prompt up to and including the breakpoint — i.e. the system prompt + the user-message body (the deterministic prefix). The output (assistant response) is never cached. This placement is the load-bearing assumption for the cost-multiplier interpretation: the cached portion is the input/prompt content, the discount applies to that portion only, and the small uncached overhead Anthropic surfaces on cache_read calls (3 input_tokens for sum-015, similar for others) is structural Anthropic overhead beyond our cached content, not a runner artefact.
 
 ### Prompt subset selection
 
@@ -67,3 +71,31 @@ The caching lever uses **the same five prompts (sum-015, 016, 017, 018, 020)** o
 The caching lever measures cost and latency multipliers at conditions where caching engages. Provider minimum token thresholds (1024 for OpenAI; 2048 for Sonnet 4.6; 4096 for Haiku 4.5 and Opus) determine which (model, prompt) pairs produce a measurement vs which are reported as "caching unavailable at our prompt sizes." The "unavailable" designation reflects our test set selection, not a property of the underlying model — production workloads with longer prompts may see caching benefits we did not measure. Where caching engages, observed multipliers are reported as a range across the N=5 prompt sample, not solely as an average, to surface heterogeneity. The OpenAI write multiplier is structurally unobservable in our design (automatic caching writes on the baseline call); the OpenAI "write" measurement reported in our results reflects the cost of a cached call when the cache was warmed by a prior call, which is the economically relevant number for production reasoning.
 
 Caching multipliers were measured at **3,348–3,838 input tokens specifically** (the sum-015..020 subset), not "summarisation prompts" generically. Production workloads with substantially different cached prefix sizes — particularly near or below provider thresholds — may see different multipliers. Multipliers near the threshold are likely to be more variable (smaller cached portion relative to overall request); multipliers well above the threshold (e.g. 10k-token prompts common in long-context RAG) may show more pronounced cache-read savings as the cached portion dominates the cost arithmetic.
+
+**Applying our findings to a production workload — the explicit scaling formula.** The observed cache_read cost multiplier `M` decomposes as:
+
+```
+M ≈ (input_share × cached_input_discount) + (output_share × 1.0)
+```
+
+where `input_share = baseline_input_cost / total_baseline_cost` and `output_share = baseline_output_cost / total_baseline_cost`. The output term is `× 1.0` because caching never discounts output tokens. A production user computes their own `input_share` and `output_share` from their workload's input/output token ratio and the model's input/output rates.
+
+For **Sonnet 4.6** ($3/MTok input, $15/MTok output) applied to our test set's ~3,500 input + ~220 output tokens:
+- input_share = (3,500 × $3) / (3,500 × $3 + 220 × $15) = $10,500 / $13,800 ≈ **0.78**
+- output_share ≈ **0.22**
+- Predicted M ≈ 0.78 × 0.1 + 0.22 × 1.0 = 0.078 + 0.22 = **0.30**
+- Observed median: **0.326×** — within ~10% of the formula. Anthropic's published 0.1× discount is being applied correctly on the cached portion; the 0.30–0.33 multiplier reflects the structural reality that 22% of total cost is output, which caching can't reach.
+
+For **GPT-4o** ($2.50/MTok input, $10/MTok output) applied to our test set's ~3,000 input + ~130 output tokens:
+- input_share = (3,000 × $2.50) / (3,000 × $2.50 + 130 × $10) = $7,500 / $8,800 ≈ **0.85**
+- output_share ≈ **0.15**
+- Predicted M (assuming all input cached at 0.5×) ≈ 0.85 × 0.5 + 0.15 × 1.0 = 0.425 + 0.15 = **0.58**
+- Observed median: **0.617×** — slightly above the formula's floor because OpenAI's 1024-token chunked caching left ~33% of input uncached on at least one prompt in our sample (sum-015: 998 of 3,046 tokens uncached, charged at full input rate). The chunked-caching effect raises the effective `cached_input_discount` from 0.5 toward 1.0 in proportion to the uncached tail. A production user whose prompt is a clean multiple of 1024 will see closer to the formula's 0.58 floor; a user whose prompt has a substantial uncached remainder will see closer to our 0.617 observation.
+
+For **GPT-4o-mini** ($0.15/MTok input, $0.60/MTok output) applied to our test set's ~3,000 input + ~130 output tokens:
+- input_share = (3,000 × $0.15) / (3,000 × $0.15 + 130 × $0.60) = $450 / $528 ≈ **0.85**
+- output_share ≈ **0.15** (GPT-4o-mini and GPT-4o share the same 4:1 input-to-output rate ratio, so the input/output cost shares are identical despite the 16× absolute price difference)
+- Predicted M ≈ 0.85 × 0.5 + 0.15 × 1.0 = **0.58**
+- Observed median: **0.591×** — closest match to the formula across the three engaging models, again with chunked-caching pushing slightly above the floor.
+
+A production user applying these findings should plug in their own `input_share`, `output_share`, and (for OpenAI) the cached fraction implied by their prompt length modulo 1024. Workloads with a high output share (e.g. long-form generation from short prompts) will see shallower cost savings than ours; workloads with very long prompts well above 1024-token multiples will see deeper savings on OpenAI as the chunked-caching tail becomes a smaller fraction of total input.

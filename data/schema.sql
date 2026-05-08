@@ -35,9 +35,17 @@ CREATE TABLE IF NOT EXISTS results (
     config_hash TEXT NOT NULL,
 
     -- Cost and performance
+    -- input_tokens: prompt tokens NOT served from cache (uncached portion).
+    --   For Anthropic this maps to resp.usage.input_tokens directly. For OpenAI
+    --   this is prompt_tokens − cached_tokens since OpenAI's prompt_tokens
+    --   includes cached.
+    -- cached_tokens: tokens read from cache on this call (cache READ).
+    -- cache_creation_tokens: tokens written to cache on this call (cache WRITE,
+    --   Anthropic only — OpenAI does not separately bill or expose creation).
     input_tokens INTEGER NOT NULL,
     output_tokens INTEGER NOT NULL,
     cached_tokens INTEGER DEFAULT 0,
+    cache_creation_tokens INTEGER DEFAULT 0,
     latency_ms INTEGER NOT NULL,
     cost_usd REAL NOT NULL,
 
