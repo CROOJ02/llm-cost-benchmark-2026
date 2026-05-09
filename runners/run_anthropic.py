@@ -147,13 +147,28 @@ def call_anthropic_with_retry(
     base_delay: float = DEFAULT_BASE_DELAY,
     enable_cache: bool = False,
 ) -> dict[str, Any]:
-    """Wraps call_anthropic with exponential-backoff retry on 429s.
-    Honors Retry-After when present; otherwise base_delay × 2^attempt + jitter.
+    """Wraps call_anthropic with retry on three transient error classes:
+      - RateLimitError (429): Retry-After header honoured, else exponential
+                              backoff base_delay × 2^attempt + jitter
+      - InternalServerError (5xx): Cloudflare retry_after body hint honoured
+                                   (via `retry_after_from_error_body`), else
+                                   DEFAULT_TRANSIENT_5XX_DELAY (120s) default
+      - APIConnectionError: DEFAULT_TRANSIENT_5XX_DELAY (120s) default
+
+    All three classes share the same `max_retries` budget (default 3 — so
+    worst case 4 attempts before raising). After exhaustion the original
+    last exception is raised so the caller (`_base.run_one`) can decide.
+
     `enable_cache` is plumbed through to call_anthropic for the caching lever."""
-    last_err: anthropic.RateLimitError | None = None
+    from runners._base import (
+        DEFAULT_TRANSIENT_5XX_DELAY, retry_after_from_error_body,
+    )
+    last_err: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
-            return call_anthropic(client, prompt, model, max_tokens=max_tokens, enable_cache=enable_cache)
+            return call_anthropic(
+                client, prompt, model, max_tokens=max_tokens, enable_cache=enable_cache,
+            )
         except anthropic.RateLimitError as e:
             last_err = e
             if attempt == max_retries:
@@ -163,6 +178,12 @@ def call_anthropic_with_retry(
                 delay = retry_after
             else:
                 delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay * 0.1)
+            time.sleep(delay)
+        except (anthropic.InternalServerError, anthropic.APIConnectionError) as e:
+            last_err = e
+            if attempt == max_retries:
+                break
+            delay = retry_after_from_error_body(e, default=DEFAULT_TRANSIENT_5XX_DELAY)
             time.sleep(delay)
     assert last_err is not None
     raise last_err

@@ -22,6 +22,7 @@ attempting the write/read calls or asserting engagement.
 from __future__ import annotations
 
 import concurrent.futures
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -41,52 +42,111 @@ from runners.schema import Prompt, load_prompts
 
 
 class CachingEngagementError(AssertionError):
-    """Raised when a caching call fails its engagement assertion. The runner
-    treats this as fatal — silently logging a non-engaged caching call would
-    pollute the Day 12 multiplier analysis with misleading data."""
+    """Reserved for unrecoverable caching protocol violations (e.g. malformed
+    response). The everyday non-engagement cases (cache-write didn't write,
+    cache-read returned cached_tokens=0) are NOT raised — they're recorded as
+    `lever='caching_unavailable'` rows in `results` instead. Day 6+ finding:
+    GPT-5.4 caching engagement is flaky in some configurations (1/5 prompts
+    on a re-measurement showed cache-read returning cached=0 despite a
+    successful write); treating those as fatal stalled the run. Treating
+    them as data points lets Day 12 quantify caching reliability across
+    prompts/models/conditions."""
 
 
-def _assert_cache_write_engaged(adapter_name: str, row: dict[str, Any]) -> None:
-    """Anthropic-only write-side assertion. OpenAI's auto-cache is opaque on
-    the write side (cached_tokens may be 0 or >0 depending on prior state),
-    so OpenAI's write call has no engagement assertion — the read assertion
-    is sufficient evidence that caching engaged for the (model, prompt)."""
+def _diagnose_cache_write(adapter_name: str, row: dict[str, Any]) -> str | None:
+    """Return a skip_reason string if the cache_write call did not engage as
+    expected, or None if engagement looks healthy. Anthropic-specific (OpenAI's
+    auto-cache is opaque on the write side; OpenAI write engagement is judged
+    via the subsequent read call hitting the cache)."""
     if adapter_name != "anthropic":
-        return
+        return None
     creation = row.get("cache_creation_tokens", 0) or 0
     read = row.get("cached_tokens", 0) or 0
     if creation == 0:
-        raise CachingEngagementError(
-            "CACHING ENGAGEMENT FAILURE — Anthropic cache-write did not write to cache.\n"
-            f"  prompt_id: {row.get('prompt_id')}\n"
-            f"  model: {row.get('model')}\n"
-            f"  cache_creation_input_tokens: {creation} (expected > 0)\n"
-            f"  cache_read_input_tokens: {read}\n"
-            f"  input_tokens (uncached): {row.get('input_tokens')}\n"
-            "Possible causes: prompt below model threshold (Sonnet 4.6=2048, Haiku 4.5=4096), "
-            "cache_control not applied to the request, or message structure mismatch."
+        return (
+            f"Anthropic cache-write did not write to cache: "
+            f"cache_creation_input_tokens=0 (expected > 0). "
+            f"Possible causes: prompt below model threshold, cache_control not applied, "
+            f"or message structure mismatch."
         )
     if read != 0:
-        raise CachingEngagementError(
-            "CACHING ENGAGEMENT FAILURE — Anthropic cache-write unexpectedly read from cache.\n"
-            f"  prompt_id: {row.get('prompt_id')}, model: {row.get('model')}\n"
-            f"  cache_read_input_tokens: {read} (expected 0; cache should have been cold)\n"
-            "A prior run within the 5-minute TTL has polluted state. Wait for TTL or use --force-new."
+        return (
+            f"Anthropic cache-write unexpectedly read from cache: "
+            f"cache_read_input_tokens={read} (expected 0; cache should have been cold). "
+            f"A prior run within the 5-minute TTL has polluted state."
         )
+    return None
 
 
-def _assert_cache_read_engaged(adapter_name: str, row: dict[str, Any]) -> None:
-    """Both providers must report cached_tokens > 0 on the read call."""
+def _diagnose_cache_read(adapter_name: str, row: dict[str, Any]) -> str | None:
+    """Return a skip_reason string if the cache_read call did not engage,
+    or None if cached_tokens > 0. Both providers."""
     cached = row.get("cached_tokens", 0) or 0
     if cached == 0:
-        raise CachingEngagementError(
-            f"CACHING ENGAGEMENT FAILURE — {adapter_name} cache-read did not hit cache.\n"
-            f"  prompt_id: {row.get('prompt_id')}, model: {row.get('model')}\n"
-            f"  cached_tokens: {cached} (expected > 0)\n"
-            f"  input_tokens (uncached): {row.get('input_tokens')}\n"
-            "Possible causes: 5-minute TTL exceeded between write and read, prompt content "
-            "differs from write call, or caching did not engage."
+        return (
+            f"{adapter_name} cache-read did not hit cache: cached_tokens=0 "
+            f"(expected > 0; input_tokens uncached={row.get('input_tokens')}). "
+            f"Possible causes: 5-minute TTL exceeded between write and read, "
+            f"prompt content differs from write call, or caching did not engage."
         )
+    return None
+
+
+def _insert_caching_unavailable_row(
+    *,
+    adapter,
+    prompt: Prompt,
+    model: str,
+    run_id: str,
+    db_path: Path,
+    write_row: dict[str, Any],
+    read_row: dict[str, Any] | None,
+    skip_reason: str,
+    force_new_attempt: bool,
+) -> dict[str, Any]:
+    """Persist a `lever='caching_unavailable'` marker row when the caching
+    write/read engagement check fails. Mirrors `compression_unavailable` —
+    the actual write/read API calls already inserted their rows under
+    `lever='caching'`; this marker is a Day 12-friendly signal that the
+    `(prompt, model)` pair did not engage cleanly. Cost is zero (no extra
+    API call)."""
+    optimisation_config: dict[str, Any] = {
+        "caching_status": "unavailable",
+        "observed_write_cached_tokens":   write_row.get("cached_tokens", 0) or 0,
+        "observed_write_creation_tokens": write_row.get("cache_creation_tokens", 0) or 0,
+        "observed_read_cached_tokens":    None if read_row is None else (read_row.get("cached_tokens", 0) or 0),
+        "skip_reason": skip_reason,
+    }
+    optimisation_config = run_openai.annotate_optimisation_config_for_reasoning_effort(
+        optimisation_config, model,
+    )
+    config_hash = _base._config_hash("caching_unavailable", optimisation_config)
+    run_attempt = 1
+    if force_new_attempt:
+        with sqlite3.connect(db_path) as conn:
+            run_attempt = _base._next_run_attempt(
+                conn, prompt.prompt_id, model, "caching_unavailable", config_hash,
+            )
+    else:
+        with sqlite3.connect(db_path) as conn:
+            existing = _base._existing_successful_row(
+                conn, prompt.prompt_id, model, "caching_unavailable", config_hash, run_attempt,
+                run_id,
+            )
+        if existing is not None:
+            return {**existing, "skipped": True}
+
+    row = _base._new_row(
+        prompt=prompt, model=model, provider=adapter.name, lever="caching_unavailable",
+        config_hash=config_hash, optimisation_config=optimisation_config,
+        run_id=run_id, run_attempt=run_attempt,
+    )
+    # Numeric fields stay 0 (no API call attached to this marker; the actual
+    # write/read API calls have their own rows under lever='caching').
+    with sqlite3.connect(db_path) as conn:
+        _base._insert_row(conn, row)
+        conn.commit()
+    return {**row, "skipped": False}
 
 
 def run_caching_for_prompt(
@@ -110,9 +170,11 @@ def run_caching_for_prompt(
         client = adapter.make_client()
     input_estimate = adapter.count_input_tokens(client, prompt, model)
 
+    baseline_cfg = run_openai.annotate_optimisation_config_for_reasoning_effort(None, model)
     baseline = _base.run_one(
         adapter, prompt, model, lever="baseline",
         run_id=run_id, cap_gbp=cap_gbp, completed=completed, planned=planned,
+        optimisation_config=baseline_cfg,
         force_new_attempt=force_new_attempt,
         db_path=db_path, client=client,
     )
@@ -130,23 +192,57 @@ def run_caching_for_prompt(
             ),
         }
 
+    write_cfg = run_openai.annotate_optimisation_config_for_reasoning_effort(
+        {"cache_phase": "write", "enable_cache": True}, model,
+    )
     write = _base.run_one(
         adapter, prompt, model, lever="caching",
         run_id=run_id, cap_gbp=cap_gbp, completed=completed, planned=planned,
-        optimisation_config={"cache_phase": "write", "enable_cache": True},
+        optimisation_config=write_cfg,
         force_new_attempt=force_new_attempt,
         db_path=db_path, client=client,
     )
-    _assert_cache_write_engaged(adapter.name, write)
+    write_skip_reason = _diagnose_cache_write(adapter.name, write)
+    if write_skip_reason is not None:
+        # Soft-fail: the write call's row is already inserted under lever='caching'.
+        # Add a marker row + return unavailable. Don't crash the sweep.
+        unavailable = _insert_caching_unavailable_row(
+            adapter=adapter, prompt=prompt, model=model, run_id=run_id, db_path=db_path,
+            write_row=write, read_row=None, skip_reason=write_skip_reason,
+            force_new_attempt=force_new_attempt,
+        )
+        return {
+            "prompt_id": prompt.prompt_id, "model": model,
+            "baseline": baseline, "cache_write": write, "cache_read": None,
+            "caching_unavailable_row": unavailable,
+            "caching_available": False, "skip_reason": write_skip_reason,
+        }
 
+    read_cfg = run_openai.annotate_optimisation_config_for_reasoning_effort(
+        {"cache_phase": "read", "enable_cache": True}, model,
+    )
     read = _base.run_one(
         adapter, prompt, model, lever="caching",
         run_id=run_id, cap_gbp=cap_gbp, completed=completed, planned=planned,
-        optimisation_config={"cache_phase": "read", "enable_cache": True},
+        optimisation_config=read_cfg,
         force_new_attempt=force_new_attempt,
         db_path=db_path, client=client,
     )
-    _assert_cache_read_engaged(adapter.name, read)
+    read_skip_reason = _diagnose_cache_read(adapter.name, read)
+    if read_skip_reason is not None:
+        # Soft-fail: read row exists with cached_tokens=0 under lever='caching'.
+        # Add a marker row capturing the observed write+read state.
+        unavailable = _insert_caching_unavailable_row(
+            adapter=adapter, prompt=prompt, model=model, run_id=run_id, db_path=db_path,
+            write_row=write, read_row=read, skip_reason=read_skip_reason,
+            force_new_attempt=force_new_attempt,
+        )
+        return {
+            "prompt_id": prompt.prompt_id, "model": model,
+            "baseline": baseline, "cache_write": write, "cache_read": read,
+            "caching_unavailable_row": unavailable,
+            "caching_available": False, "skip_reason": read_skip_reason,
+        }
 
     return {
         "prompt_id": prompt.prompt_id,

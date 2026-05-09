@@ -168,6 +168,9 @@ def _insert_compression_unavailable_row(
         "llmlingua_model": _LLMLINGUA_MODEL,
         "skip_reason": skip_reason,
     }
+    optimisation_config = run_openai.annotate_optimisation_config_for_reasoning_effort(
+        optimisation_config, model,
+    )
     config_hash = _base._config_hash("compression", optimisation_config)
     run_attempt = 1
     if force_new_attempt:
@@ -179,6 +182,7 @@ def _insert_compression_unavailable_row(
         with sqlite3.connect(db_path) as conn:
             existing = _base._existing_successful_row(
                 conn, prompt.prompt_id, model, "compression", config_hash, run_attempt,
+                run_id,
             )
         if existing is not None:
             return {
@@ -274,6 +278,9 @@ def run_compression_for_prompt(
         "llmlingua_rate":             rate,
         "llmlingua_model":            _LLMLINGUA_MODEL,
     }
+    optimisation_config = run_openai.annotate_optimisation_config_for_reasoning_effort(
+        optimisation_config, model,
+    )
 
     row = _base.run_one(
         adapter, compressed_prompt, model, lever="compression",

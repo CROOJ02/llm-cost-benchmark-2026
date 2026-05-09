@@ -159,8 +159,14 @@ class Orchestrator:
         for model in models:
             self._phase_log("baseline", "start", {"model": model, "n_prompts": len(prompts)})
             adapter = _adapter_for_model(model)
+            # Annotate optimisation_config with reasoning_effort='low' for GPT-5.4
+            # family so the result row carries the reasoning setting (config_hash
+            # includes it; Day 12 can distinguish 'low' vs 'medium' historical
+            # runs). Returns None for non-GPT-5.4 models, preserving prior behaviour.
+            optimisation_config = run_openai.annotate_optimisation_config_for_reasoning_effort(None, model)
             results = _base.run_many(
                 adapter, prompts, model, lever="baseline",
+                optimisation_config=optimisation_config,
                 run_id=self.run_id, cap_gbp=self.cap_gbp, db_path=self.db_path,
             )
             # Cache-contamination check (methodology audit signal). OpenAI's
@@ -517,7 +523,8 @@ class Orchestrator:
         run_attempt = 1
         with sqlite3.connect(self.db_path) as conn:
             existing = _base._existing_successful_row(
-                conn, prompt.prompt_id, model, lever, config_hash, run_attempt
+                conn, prompt.prompt_id, model, lever, config_hash, run_attempt,
+                self.run_id,
             )
             if existing is not None:
                 return False

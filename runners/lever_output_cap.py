@@ -71,10 +71,13 @@ def run_output_cap_for_prompt(
     db_path: Path = DB_PATH,
     client: Any = None,
 ) -> dict[str, Any]:
+    optimisation_config = run_openai.annotate_optimisation_config_for_reasoning_effort(
+        {"max_tokens": max_tokens}, model,
+    )
     row = _base.run_one(
         adapter, prompt, model, lever="output_cap",
         run_id=run_id, cap_gbp=cap_gbp, completed=completed, planned=planned,
-        optimisation_config={"max_tokens": max_tokens},
+        optimisation_config=optimisation_config,
         max_tokens=max_tokens,
         force_new_attempt=force_new_attempt,
         db_path=db_path, client=client,

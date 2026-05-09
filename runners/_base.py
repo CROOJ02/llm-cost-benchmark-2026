@@ -36,9 +36,31 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = REPO_ROOT / "data" / "results.db"
 
 DEFAULT_MAX_TOKENS = 1024
-DEFAULT_MAX_RETRIES = 5
+DEFAULT_MAX_RETRIES = 3
 DEFAULT_BASE_DELAY = 1.0
 DEFAULT_CONCURRENCY = 4
+# Default backoff (seconds) for transient 5xx / connection errors when the
+# provider's response body doesn't include a Cloudflare-style `retry_after`
+# hint. Aligned with `lever_batch._retry_batch_submit`'s default.
+DEFAULT_TRANSIENT_5XX_DELAY = 120.0
+
+
+def retry_after_from_error_body(err: Exception, default: float) -> float:
+    """Extract Cloudflare's `retry_after` hint from the error response body
+    when present. Cloudflare 5xx responses include a `retry_after` field in
+    the JSON body (not a header). Falls back to `default` when missing or
+    malformed. Provider-agnostic — works for both Anthropic and OpenAI
+    InternalServerError instances. Used by run_anthropic / run_openai's
+    sync-call retry wrappers and lever_batch's submit retry wrapper."""
+    body = getattr(err, "body", None)
+    if isinstance(body, dict):
+        ra = body.get("retry_after")
+        if ra is not None:
+            try:
+                return float(ra)
+            except (TypeError, ValueError):
+                pass
+    return default
 
 # Process-wide lock around (cap-check + reservation). Shared across providers
 # so that mixed-provider concurrent runs (Day 7+) still serialise the cap gate.
@@ -127,13 +149,24 @@ def _release_reservation(*, run_id: str, estimated_gbp: float, db_path: Path) ->
 def _existing_successful_row(
     conn: sqlite3.Connection,
     prompt_id: str, model: str, lever: str, config_hash: str, run_attempt: int,
+    run_id: str,
 ) -> dict[str, Any] | None:
+    """Skip-if-exists check, scoped to a single run_id.
+
+    Each `run_id` is a fresh measurement: skip-if-exists must not block a
+    new run from re-firing a prompt+model+lever just because a prior run
+    happens to have a row at the same config_hash and run_attempt. The
+    prior bug was a missing `run_id` predicate here, which caused (e.g.)
+    Day 7's baseline phase to silently inherit Day 6 dry-run rows. See
+    methodology doc, Day 9 audit.
+    """
     cur = conn.execute(
         """SELECT * FROM results
            WHERE prompt_id = ? AND model = ? AND optimisation_lever = ?
-             AND config_hash = ? AND run_attempt = ? AND error IS NULL
+             AND config_hash = ? AND run_attempt = ? AND run_id = ?
+             AND error IS NULL
            LIMIT 1""",
-        (prompt_id, model, lever, config_hash, run_attempt),
+        (prompt_id, model, lever, config_hash, run_attempt, run_id),
     )
     row = cur.fetchone()
     if row is None:
@@ -248,7 +281,8 @@ def run_one(
         run_attempt = 1
         with sqlite3.connect(db_path) as conn:
             existing = _existing_successful_row(
-                conn, prompt.prompt_id, model, lever, config_hash, run_attempt
+                conn, prompt.prompt_id, model, lever, config_hash, run_attempt,
+                run_id,
             )
         if existing is not None:
             return {**existing, "skipped": True}

@@ -27,3 +27,12 @@ benchmark_results.json.bak
 
 # Pytest
 .pytest_cache/
+
+# Project data — .db files are run-specific empirical results, not source.
+# data/schema.sql IS the source of truth for table shape and stays tracked.
+data/*.db
+data/*.db.bak*
+data/*.jsonl
+
+# Local agent state
+.claude/

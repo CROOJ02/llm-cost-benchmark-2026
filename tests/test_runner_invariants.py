@@ -1,9 +1,12 @@
 """Layer 1 unit tests for runner invariants.
 
-Nine cases (4 original + 2 added Day 6 alongside the model-currency rework +
+Fourteen cases (4 original + 2 added Day 6 alongside the model-currency rework +
 1 added Day 6 day-2 alongside the lever='batch' refactor + 1 added Day 6 day-2
 alongside the OpenAI cache-contamination methodology finding + 1 added Day 6
-day-2 alongside the compression-engagement softening):
+day-2 alongside the compression-engagement softening + 1 added Day 6 day-2
+alongside the caching-engagement softening + 2 added Day 7 alongside the
+batch-submit transient-error retry + 2 added Day 7 alongside the sync-call
+transient-error retry):
   1. test_cost_reservation_released_under_retry_exhaustion — when the API
      hits 429s 6 times and exhausts retries, the runner writes an error row
      and releases the reserved cost; runs.cost_so_far_gbp stays unchanged
@@ -43,6 +46,27 @@ day-2 alongside the compression-engagement softening):
      return level but persists as a row so Day 12 can distinguish
      "didn't try compression" from "tried, tokeniser asymmetry made it
      unavailable" via SQL JOIN.
+ 10. test_caching_unavailable_inserts_row — when cache_read returns
+     cached_tokens=0 (empirically observed on GPT-5.4 sum-018), the lever
+     inserts a `lever='caching_unavailable'` marker row instead of raising
+     CachingEngagementError. The actual write/read API rows still exist
+     under lever='caching'; the marker carries the observed write/read
+     state + skip_reason so Day 12 can quantify caching reliability.
+ 11. test_batch_submit_retry_succeeds_on_transient_5xx — when the provider
+     returns a 504 (Cloudflare gateway timeout) on the first batches.create
+     call, _retry_batch_submit retries after the Cloudflare-provided
+     retry_after delay and succeeds on attempt 2. Caught Day 7 attempt 1
+     crash where this exact 504 took down the whole submit_batches loop.
+ 12. test_batch_submit_retry_exhaustion_raises — after 3 retries (4 attempts
+     total) of persistent 5xx, _retry_batch_submit raises the last error so
+     the orchestrator can decide what to do (currently bubbles up).
+ 13. test_sync_call_retry_succeeds_on_transient_5xx — call_openai_with_retry
+     catches InternalServerError (504), waits Cloudflare's retry_after
+     (mocked sleep), and succeeds on retry. Same coverage class as Test 11
+     but for the sync-call path that runs all 800+ Day 7 sync calls.
+ 14. test_sync_call_retry_exhaustion_raises — 4 consecutive 504s exhausts the
+     shared max_retries=3 budget; the original InternalServerError bubbles
+     up so _base.run_one's reservation-release path can fire.
 """
 
 from __future__ import annotations
@@ -53,6 +77,7 @@ from unittest.mock import MagicMock
 
 import anthropic
 import httpx
+import openai
 import pytest
 
 from runners import _base
@@ -287,6 +312,61 @@ def test_skip_if_exists_distinguishes_lever_variants(fresh_db):
     hashes = {r[1] for r in rows}
     assert levers == {"baseline", "caching"}
     assert len(hashes) == 2, "baseline and caching should have distinct config_hashes"
+
+
+def test_skip_if_exists_is_run_id_scoped(fresh_db):
+    """Regression for the Day 9 cross-run skip bug.
+
+    Skip-if-exists must scope to a single run_id: a row written under run_id_A
+    must NOT cause a fresh run_id_B from skipping the same (prompt, model,
+    lever, config_hash, run_attempt) tuple. Each run_id is a fresh measurement.
+
+    Inverse must still hold: a duplicate within the same run_id IS skipped, so
+    intra-run idempotency for orchestrator restarts is preserved.
+
+    Until 2026-05-09 the query at _existing_successful_row was run-id-agnostic,
+    which caused 33 missing rows in production run-d1a9c980 because Day 6
+    dry-run rows blocked the production baseline phase from firing. See
+    methodology doc, Day 9 audit.
+    """
+    rid_a = start_run(cost_cap_gbp=300.0, db_path=fresh_db)
+    rid_b = start_run(cost_cap_gbp=300.0, db_path=fresh_db)
+    prompt = make_prompt("test-001", task_category="summarisation")
+    adapter = _FakeAdapter(input_tokens=100, output_tokens=50)
+
+    r1 = run_one(
+        adapter, prompt, "claude-sonnet-4-6", lever="baseline",
+        run_id=rid_a, cap_gbp=300.0, completed=0, planned=1, db_path=fresh_db,
+    )
+    assert not r1.get("skipped")
+
+    r2 = run_one(
+        adapter, prompt, "claude-sonnet-4-6", lever="baseline",
+        run_id=rid_b, cap_gbp=300.0, completed=0, planned=1, db_path=fresh_db,
+    )
+    assert not r2.get("skipped"), (
+        "fresh run_id was wrongly blocked by a row in a prior run_id; "
+        "skip-if-exists must filter by run_id"
+    )
+    assert r2["run_id"] == rid_b
+    assert r2["run_attempt"] == 1
+
+    r3 = run_one(
+        adapter, prompt, "claude-sonnet-4-6", lever="baseline",
+        run_id=rid_a, cap_gbp=300.0, completed=1, planned=2, db_path=fresh_db,
+    )
+    assert r3.get("skipped"), (
+        "duplicate within the same run_id must still be skipped — "
+        "intra-run idempotency must not regress"
+    )
+
+    with sqlite3.connect(fresh_db) as conn:
+        run_id_counts = dict(conn.execute(
+            "SELECT run_id, COUNT(*) FROM results WHERE prompt_id='test-001' GROUP BY run_id"
+        ).fetchall())
+    assert run_id_counts == {rid_a: 1, rid_b: 1}, (
+        f"each run_id should have exactly one row for the prompt; got {run_id_counts}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -699,3 +779,241 @@ def test_compression_unavailable_inserts_row(monkeypatch, fresh_db):
     assert rows[0][4] == 0.0        # zero cost
     assert rows[0][5] == ""         # empty response
     assert rows[0][6] is None       # no error — unavailability is not failure
+
+
+# ---------------------------------------------------------------------------
+# Test 10: caching_unavailable inserts a marker row instead of raising
+# ---------------------------------------------------------------------------
+
+def test_caching_unavailable_inserts_row(monkeypatch, fresh_db):
+    """When cache_read returns cached_tokens=0 (empirically observed on
+    GPT-5.4 sum-018 during Day 6 day-2 re-measurement), the caching lever
+    inserts a `lever='caching_unavailable'` marker row instead of raising
+    CachingEngagementError. The marker carries observed write+read cached
+    counts and the skip_reason in optimisation_config so Day 12 can quantify
+    caching reliability across (model, prompt) pairs."""
+    import json as _json
+    from runners import lever_caching, run_openai
+
+    rid = start_run(cost_cap_gbp=300.0, db_path=fresh_db)
+    prompt = make_prompt("sum-015", task_category="summarisation")
+
+    # Stand in for `_base.run_one` — return rows with the desired cached_tokens
+    # state per lever / cache_phase to drive the soft-fail path:
+    #   - baseline: normal row
+    #   - caching write: cached=2816 (cache was warm; this is fine for OpenAI)
+    #   - caching read:  cached=0 (the failure case we're testing)
+    call_count = {"baseline": 0, "write": 0, "read": 0}
+    def _fake_run_one(adapter, p, model, lever, *,
+                      run_id, cap_gbp, completed, planned,
+                      optimisation_config=None, force_new_attempt=False,
+                      db_path, client=None, **kw):
+        cfg = optimisation_config or {}
+        if lever == "baseline":
+            call_count["baseline"] += 1
+            cached = 0
+        elif lever == "caching" and cfg.get("cache_phase") == "write":
+            call_count["write"] += 1
+            cached = 2816  # write call shows warm cache from prior state
+        elif lever == "caching" and cfg.get("cache_phase") == "read":
+            call_count["read"] += 1
+            cached = 0  # ← the failure: read returns no cached tokens
+        else:
+            raise AssertionError(f"unexpected lever={lever} cfg={cfg}")
+        config_hash = _base._config_hash(lever, cfg)
+        row = _base._new_row(
+            prompt=p, model=model, provider=adapter.name, lever=lever,
+            config_hash=config_hash, optimisation_config=cfg,
+            run_id=run_id, run_attempt=1,
+        )
+        row.update({
+            "input_tokens": 3000, "output_tokens": 100,
+            "cached_tokens": cached, "cache_creation_tokens": 0,
+            "cost_usd": 0.005, "latency_ms": 200,
+            "response_text": "ok", "model_version": model,
+        })
+        with sqlite3.connect(db_path) as conn:
+            _base._insert_row(conn, row)
+            conn.commit()
+        return {**row, "skipped": False}
+
+    monkeypatch.setattr(_base, "run_one", _fake_run_one)
+    # Avoid creating a real Anthropic/OpenAI client for the count_tokens path.
+    monkeypatch.setattr(
+        run_openai.OPENAI_ADAPTER, "count_input_tokens",
+        lambda *a, **kw: 3000,  # well above 1024 OpenAI cache threshold
+    )
+    monkeypatch.setattr(
+        run_openai.OPENAI_ADAPTER, "make_client",
+        lambda: MagicMock(),
+    )
+
+    # Run the caching test on a single OpenAI prompt+model
+    result = lever_caching.run_caching_for_prompt(
+        run_openai.OPENAI_ADAPTER, prompt, "gpt-5.4-2026-03-05",
+        run_id=rid, cap_gbp=300.0, completed=0, planned=1, db_path=fresh_db,
+    )
+
+    # Lever didn't raise; signals unavailability
+    assert result["caching_available"] is False
+    assert "cache-read did not hit cache" in result["skip_reason"]
+    assert "caching_unavailable_row" in result
+    assert call_count == {"baseline": 1, "write": 1, "read": 1}
+
+    # DB has 4 rows: baseline + caching/write + caching/read + caching_unavailable
+    with sqlite3.connect(fresh_db) as conn:
+        rows = conn.execute(
+            "SELECT optimisation_lever, optimisation_config, cached_tokens, cost_usd "
+            "FROM results WHERE prompt_id='sum-015' "
+            "ORDER BY optimisation_lever, optimisation_config",
+        ).fetchall()
+    levers = [r[0] for r in rows]
+    assert sorted(levers) == ["baseline", "caching", "caching", "caching_unavailable"]
+
+    # The unavailable marker row has the observed state + zero cost
+    unavail = [r for r in rows if r[0] == "caching_unavailable"][0]
+    cfg = _json.loads(unavail[1])
+    assert cfg["caching_status"] == "unavailable"
+    assert cfg["observed_write_cached_tokens"] == 2816
+    assert cfg["observed_read_cached_tokens"] == 0
+    assert "cache-read did not hit cache" in cfg["skip_reason"]
+    assert unavail[2] == 0      # cached_tokens on marker row is 0 (no API call)
+    assert unavail[3] == 0.0    # zero cost
+
+
+# ---------------------------------------------------------------------------
+# Tests 11+12: batch-submit transient-5xx retry
+# ---------------------------------------------------------------------------
+
+def _fake_openai_504(retry_after: int | None = 120) -> openai.InternalServerError:
+    """Construct an OpenAI InternalServerError matching the actual Cloudflare
+    504 body shape that crashed Day 7 attempt 1's batches.create call."""
+    fake_request = httpx.Request("POST", "https://api.openai.com/v1/batches")
+    body: dict = {
+        "type": "https://developers.cloudflare.com/.../error-504/",
+        "title": "Error 504: Gateway time-out",
+        "status": 504,
+        "detail": "The origin web server did not respond to Cloudflare within the allowed time.",
+        "error_code": 504,
+        "cloudflare_error": True,
+    }
+    if retry_after is not None:
+        body["retry_after"] = retry_after
+    fake_response = httpx.Response(status_code=504, request=fake_request, json=body)
+    return openai.InternalServerError(
+        message="504 Gateway time-out",
+        response=fake_response,
+        body=body,
+    )
+
+
+def test_batch_submit_retry_succeeds_on_transient_5xx(monkeypatch):
+    """First call raises Cloudflare 504 with retry_after=10; retry waits the
+    indicated delay (mocked) and succeeds on attempt 2. Day 7 attempt 1 hit
+    exactly this on gpt-5.4-mini batches.create — fix is verified end-to-end."""
+    from runners import lever_batch
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(lever_batch.time, "sleep", lambda s: sleep_calls.append(s))
+
+    call_count = {"n": 0}
+    def _flaky_create():
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise _fake_openai_504(retry_after=10)
+        return MagicMock(id="batch_success_001")
+
+    result = lever_batch._retry_batch_submit(_flaky_create)
+
+    assert call_count["n"] == 2
+    assert result.id == "batch_success_001"
+    assert sleep_calls == [10.0]  # honoured Cloudflare retry_after, not the 120s default
+
+
+def test_batch_submit_retry_exhaustion_raises(monkeypatch):
+    """4 consecutive 504s (1 initial + 3 retries) exhausts the wrapper's
+    retry budget and raises the last error so the orchestrator can decide.
+    Verifies max_retries=3 (matching submit_batch's contract)."""
+    from runners import lever_batch
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(lever_batch.time, "sleep", lambda s: sleep_calls.append(s))
+
+    call_count = {"n": 0}
+    def _always_504():
+        call_count["n"] += 1
+        # Body without retry_after → wrapper falls back to default_delay_s (120)
+        raise _fake_openai_504(retry_after=None)
+
+    with pytest.raises(openai.InternalServerError):
+        lever_batch._retry_batch_submit(_always_504, max_retries=3, default_delay_s=120.0)
+
+    # 1 initial + 3 retries = 4 attempts; 3 sleeps between them
+    assert call_count["n"] == 4
+    assert sleep_calls == [120.0, 120.0, 120.0]
+
+
+# ---------------------------------------------------------------------------
+# Tests 13+14: sync-call transient-5xx retry (call_openai_with_retry)
+# ---------------------------------------------------------------------------
+
+def test_sync_call_retry_succeeds_on_transient_5xx(monkeypatch):
+    """Sync-call path: chat.completions.create raises Cloudflare 504 once
+    (with retry_after=15), then succeeds. call_openai_with_retry waits the
+    indicated delay and returns successfully on retry. Verifies sync calls
+    survive transient OpenAI 5xx — the failure class that crashed Day 7
+    submit_batches and would equally crash Day 7's 800+ baseline calls."""
+    from runners import run_openai
+    from tests.conftest import make_prompt
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(run_openai.time, "sleep", lambda s: sleep_calls.append(s))
+
+    mock_client = MagicMock(spec=openai.OpenAI)
+    success = MagicMock()
+    success.choices = [MagicMock(message=MagicMock(content="ok"), finish_reason="stop")]
+    success.usage = MagicMock(prompt_tokens=10, completion_tokens=2,
+                              prompt_tokens_details=MagicMock(cached_tokens=0))
+    success.model = "gpt-5.4-2026-03-05"
+    mock_client.chat.completions.create.side_effect = [
+        _fake_openai_504(retry_after=15),
+        success,
+    ]
+
+    result = run_openai.call_openai_with_retry(
+        mock_client, make_prompt(), "gpt-5.4-2026-03-05",
+        max_tokens=16, max_retries=3, base_delay=1.0,
+    )
+
+    assert mock_client.chat.completions.create.call_count == 2
+    assert sleep_calls == [15.0]   # honoured Cloudflare retry_after, not 120s default
+    assert result["response_text"] == "ok"
+    assert result["input_tokens"] == 10
+    assert result["output_tokens"] == 2
+
+
+def test_sync_call_retry_exhaustion_raises(monkeypatch):
+    """4 consecutive 504s (1 initial + max_retries=3 retries) exhausts the
+    shared retry budget; call_openai_with_retry raises the original
+    InternalServerError so _base.run_one's outer try/except can release the
+    reservation and propagate up to the orchestrator's per-model loop."""
+    from runners import run_openai
+    from tests.conftest import make_prompt
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(run_openai.time, "sleep", lambda s: sleep_calls.append(s))
+
+    mock_client = MagicMock(spec=openai.OpenAI)
+    # Body without retry_after → wrapper falls back to DEFAULT_TRANSIENT_5XX_DELAY
+    mock_client.chat.completions.create.side_effect = [
+        _fake_openai_504(retry_after=None) for _ in range(4)
+    ]
+
+    with pytest.raises(openai.InternalServerError):
+        run_openai.call_openai_with_retry(
+            mock_client, make_prompt(), "gpt-5.4-2026-03-05",
+            max_tokens=16, max_retries=3, base_delay=1.0,
+        )
+
+    assert mock_client.chat.completions.create.call_count == 4
+    assert sleep_calls == [120.0, 120.0, 120.0]   # DEFAULT_TRANSIENT_5XX_DELAY × 3

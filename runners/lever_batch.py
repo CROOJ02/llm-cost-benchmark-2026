@@ -31,11 +31,55 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 import anthropic
 import openai
 from dotenv import load_dotenv
+
+T = TypeVar("T")
+
+# Transient batch-submission errors worth retrying. 5xx (incl. Cloudflare 504
+# from origin overload — the failure mode that crashed Day 7's first attempt)
+# and connection errors (DNS / TLS / TCP transients). Excludes 4xx (bad
+# request, auth, etc.) which are non-recoverable from our side.
+_TRANSIENT_SUBMIT_ERRORS: tuple = (
+    anthropic.InternalServerError, anthropic.APIConnectionError,
+    openai.InternalServerError, openai.APIConnectionError,
+)
+
+
+def _retry_batch_submit(
+    call_fn: Callable[[], T], *,
+    max_retries: int = 3,
+    default_delay_s: float = 120.0,
+) -> T:
+    """Run a batch-submission call, retrying on transient 5xx / connection
+    errors. Honours Cloudflare's `retry_after` body hint when present;
+    otherwise sleeps `default_delay_s` between attempts. Max 3 retries
+    (worst-case ~6 minutes wall before exhausting). On exhaustion, raises
+    the last transient exception so the orchestrator can decide what to do
+    (currently bubbles up to the operator).
+
+    Used to wrap `client.messages.batches.create` (Anthropic) and
+    `client.files.create` + `client.batches.create` (OpenAI) in
+    `_submit_anthropic_batch` / `_submit_openai_batch`. Same robustness
+    pattern as `retrieve_batches`'s per-poll catch — catches OpenAI's batch
+    queue overload at submit time so a single transient gateway timeout
+    doesn't crash the whole Day 7 sweep mid-batch_submit phase."""
+    last_err: Exception | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            return call_fn()
+        except _TRANSIENT_SUBMIT_ERRORS as e:
+            last_err = e
+            if attempt == max_retries:
+                break
+            from runners._base import retry_after_from_error_body
+            delay = retry_after_from_error_body(e, default=default_delay_s)
+            time.sleep(delay)
+    assert last_err is not None
+    raise last_err
 
 from runners import run_anthropic, run_openai
 from runners._base import (
@@ -60,6 +104,10 @@ def _submit_anthropic_batch(
 
     Each prompt is one request with custom_id=prompt.prompt_id; that custom_id
     is what links per-prompt results back at retrieval time.
+
+    Wrapped in `_retry_batch_submit` so transient 5xx / connection errors
+    (incl. Cloudflare 504 origin overload) trigger up to 3 retries with the
+    Cloudflare-provided retry_after hint or a 120s default backoff.
     """
     requests = [
         {
@@ -74,7 +122,11 @@ def _submit_anthropic_batch(
         }
         for p in prompts
     ]
-    batch = client.messages.batches.create(requests=requests)
+
+    def _do_create() -> Any:
+        return client.messages.batches.create(requests=requests)
+
+    batch = _retry_batch_submit(_do_create)
     if not batch.id:
         raise RuntimeError(
             f"Anthropic batch submission returned empty id; batch object = {batch!r}"
@@ -94,6 +146,9 @@ def _submit_openai_batch(
     then create a batch from the file. The custom_id field on each line links
     per-prompt results back at retrieval time.
     """
+    # Mirror the sync-call decision: temperature=0 across all models, and
+    # let reasoning_effort default to API default ('medium' for GPT-5.4
+    # reasoning models). See run_openai.call_openai for rationale.
     lines = [
         json.dumps({
             "custom_id": p.prompt_id,
@@ -114,14 +169,26 @@ def _submit_openai_batch(
         for p in prompts
     ]
     payload = ("\n".join(lines)).encode("utf-8")
-    file_obj = io.BytesIO(payload)
-    file_obj.name = "batch.jsonl"  # OpenAI requires a filename on the upload
-    uploaded = client.files.create(file=file_obj, purpose="batch")
-    batch = client.batches.create(
-        input_file_id=uploaded.id,
-        endpoint="/v1/chat/completions",
-        completion_window="24h",
-    )
+
+    # Both file upload and batch creation can transient 5xx (Cloudflare 504
+    # caught Day 7 attempt 1 on batches.create). Each wrapped in retry; on
+    # exhaustion the last error bubbles up. File upload retries build a fresh
+    # BytesIO each attempt because the previous read may have advanced position.
+    def _do_upload() -> Any:
+        file_obj = io.BytesIO(payload)
+        file_obj.name = "batch.jsonl"  # OpenAI requires a filename on upload
+        return client.files.create(file=file_obj, purpose="batch")
+
+    uploaded = _retry_batch_submit(_do_upload)
+
+    def _do_create() -> Any:
+        return client.batches.create(
+            input_file_id=uploaded.id,
+            endpoint="/v1/chat/completions",
+            completion_window="24h",
+        )
+
+    batch = _retry_batch_submit(_do_create)
     if not batch.id:
         raise RuntimeError(
             f"OpenAI batch submission returned empty id; batch object = {batch!r}"

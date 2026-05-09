@@ -70,19 +70,23 @@ def test_run_day_7_phases_execute_in_order(monkeypatch, tmp_path, fresh_db, temp
     def _fake_caching_test(adapter, prompts, model, *, run_id, cap_gbp, db_path, **kw):
         """Mirror lever_caching.run_caching_test's row-insert contract,
         respecting skip-if-exists for the baseline cell (run_baseline already
-        inserted it earlier in the phase sequence)."""
+        inserted it earlier in the phase sequence). Mirrors the real lever's
+        reasoning_effort annotation on each cell so the config_hashes match
+        the orchestrator's annotated baseline (for GPT-5.4 family)."""
+        from runners import run_openai
+        annotate = run_openai.annotate_optimisation_config_for_reasoning_effort
         out = []
         for p in prompts:
             cells = []
             for lever, cfg in [
-                ("baseline", None),
-                ("caching", {"cache_phase": "write", "enable_cache": True}),
-                ("caching", {"cache_phase": "read",  "enable_cache": True}),
+                ("baseline", annotate(None, model)),
+                ("caching",  annotate({"cache_phase": "write", "enable_cache": True}, model)),
+                ("caching",  annotate({"cache_phase": "read",  "enable_cache": True}, model)),
             ]:
                 config_hash = _base._config_hash(lever, cfg)
                 with sqlite3.connect(db_path) as conn:
                     existing = _base._existing_successful_row(
-                        conn, p.prompt_id, model, lever, config_hash, 1
+                        conn, p.prompt_id, model, lever, config_hash, 1, run_id,
                     )
                 if existing is not None:
                     cells.append(existing)

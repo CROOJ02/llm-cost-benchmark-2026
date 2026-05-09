@@ -85,6 +85,38 @@ def count_input_tokens(client: openai.OpenAI, prompt: Prompt, model: str) -> int
     return n
 
 
+def model_is_gpt_5_4_family(model: str) -> bool:
+    """GPT-5.4 family (gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.4-pro and
+    their dated snapshots). Used by the annotation helper below to tag result
+    rows with the API-default reasoning_effort the call ran at."""
+    return model.startswith("gpt-5.4")
+
+
+def annotate_optimisation_config_for_reasoning_effort(
+    optimisation_config: dict[str, Any] | None, model: str,
+) -> dict[str, Any] | None:
+    """Record reasoning_effort='medium' in the row's optimisation_config when
+    calling a GPT-5.4-family model. We do NOT pass reasoning_effort to the API
+    (so the API default applies); for the GPT-5.4 family that default is
+    'medium', so we annotate to record what actually ran. Returns
+    optimisation_config unchanged for non-GPT-5.4 models. Levers and the
+    orchestrator call this just before passing optimisation_config to
+    `_base.run_one` / `_base.run_many` so config_hash includes the reasoning
+    dimension and Day 12 analysis can JOIN on it.
+
+    Day 6+ decision (see methodology doc § "GPT-5.4 reasoning_effort and
+    temperature interaction"): the benchmark uses reasoning_effort=medium +
+    temperature=0 for cross-provider symmetry. Setting reasoning_effort='low'
+    explicitly forces temperature=1 (API constraint); the empirical 2×2
+    decomposition showed temperature is the dominant cost variable, so the
+    cheaper available regime is medium+temp=0."""
+    if not model_is_gpt_5_4_family(model):
+        return optimisation_config
+    cfg = dict(optimisation_config) if optimisation_config else {}
+    cfg["reasoning_effort"] = "medium"
+    return cfg
+
+
 def call_openai(
     client: openai.OpenAI,
     prompt: Prompt,
@@ -96,6 +128,15 @@ def call_openai(
     # We emit `max_completion_tokens` universally — both families accept it as
     # of 2026-05. The internal parameter name (`max_tokens`) is kept for
     # provider-agnostic call-site symmetry with run_anthropic.
+    # Per methodology doc § "GPT-5.4 reasoning_effort and temperature
+    # interaction": the benchmark uses temperature=0 across all models for
+    # reproducibility, and lets reasoning_effort default (API default is
+    # 'medium' for GPT-5.4 reasoning models). The empirical decomposition
+    # showed temperature dominates cost; pinning temperature=0 + leaving
+    # reasoning_effort at API default is the cheapest regime available
+    # within cross-provider symmetry constraints. (Setting reasoning_effort
+    # explicitly to 'low' would force temperature=1 — API constraint — and
+    # cost 43-46% MORE on the cs-001..005 controlled comparison.)
     started = time.perf_counter()
     resp = client.chat.completions.create(
         model=model,
@@ -156,9 +197,21 @@ def call_openai_with_retry(
     max_retries: int = DEFAULT_MAX_RETRIES,
     base_delay: float = DEFAULT_BASE_DELAY,
 ) -> dict[str, Any]:
-    """Wraps call_openai with exponential-backoff retry on 429s.
-    Honors Retry-After when present; otherwise base_delay × 2^attempt + jitter."""
-    last_err: openai.RateLimitError | None = None
+    """Wraps call_openai with retry on three transient error classes:
+      - RateLimitError (429): Retry-After header honoured, else exponential
+                              backoff base_delay × 2^attempt + jitter
+      - InternalServerError (5xx): Cloudflare retry_after body hint honoured
+                                   (via `retry_after_from_error_body`), else
+                                   DEFAULT_TRANSIENT_5XX_DELAY (120s) default
+      - Connection errors: DEFAULT_TRANSIENT_5XX_DELAY (120s) default
+
+    All three classes share the same `max_retries` budget (default 3 — so
+    worst case 4 attempts before raising). After exhaustion the original
+    last exception is raised so the caller (`_base.run_one`) can decide."""
+    from runners._base import (
+        DEFAULT_TRANSIENT_5XX_DELAY, retry_after_from_error_body,
+    )
+    last_err: Exception | None = None
     for attempt in range(max_retries + 1):
         try:
             return call_openai(client, prompt, model, max_tokens=max_tokens)
@@ -171,6 +224,12 @@ def call_openai_with_retry(
                 delay = retry_after
             else:
                 delay = base_delay * (2 ** attempt) + random.uniform(0, base_delay * 0.1)
+            time.sleep(delay)
+        except (openai.InternalServerError, openai.APIConnectionError) as e:
+            last_err = e
+            if attempt == max_retries:
+                break
+            delay = retry_after_from_error_body(e, default=DEFAULT_TRANSIENT_5XX_DELAY)
             time.sleep(delay)
     assert last_err is not None
     raise last_err

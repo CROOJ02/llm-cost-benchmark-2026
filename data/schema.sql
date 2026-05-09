@@ -63,12 +63,32 @@ CREATE TABLE IF NOT EXISTS results (
     final_score REAL,
     score_recomputed_at TEXT,
 
+    -- Tier-1 deterministic scoring (Day 9). tier_1_status is the per-row enum:
+    --   'pass' | 'fail_format' | 'fail_schema' | 'fail_content' | 'truncated'
+    --   | 'compression_unavailable' | 'error' | 'not_applicable'
+    -- normalisation_steps_applied is a JSON array of step names (e.g.
+    -- ["fence_strip", "preamble_strip", "unwrap_result"]) so Day 12 analysis can
+    -- see whether any provider's outputs systematically depend on a given step.
+    -- truncated_due_to_cap is a separate flag for output_cap rows where the
+    -- response hit the cap AND failed to parse — distinguishes design-induced
+    -- truncation from genuine format failure.
+    tier_1_status TEXT,
+    normalisation_steps_applied TEXT,
+    truncated_due_to_cap INTEGER DEFAULT 0,
+
     -- Reproducibility
     model_version TEXT,
     temperature REAL DEFAULT 0,
     error TEXT,
 
-    UNIQUE(prompt_id, model, optimisation_lever, config_hash, run_attempt)
+    -- run_id is included so each run_id is an independent measurement: two
+    -- rows that differ only in run_id are now permitted (where the prior
+    -- schema would have rejected the second insert at the DB layer even
+    -- after the application-level skip-if-exists correctly let it through).
+    -- Pairs with the run_id-aware skip-if-exists query in _base.py — neither
+    -- alone is sufficient. See "Skip-if-exists semantics" in
+    -- docs/methodology/prompt_design_decisions.md.
+    UNIQUE(prompt_id, model, optimisation_lever, config_hash, run_attempt, run_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_results_prompt ON results(prompt_id);

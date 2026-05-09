@@ -161,6 +161,14 @@ This was observed empirically during the Day 6 Layer 4 dry-run. The dry-run's `r
 
 Anthropic's `cache_control: ephemeral` is opt-in: baseline calls without `cache_control` do NOT engage Anthropic's cache regardless of prior calls. This contamination risk is OpenAI-specific.
 
+#### GPT-5.4 reasoning_effort and temperature interaction (empirical decomposition)
+
+GPT-5.4 (reasoning model family) does not accept `temperature=0` when `reasoning_effort` is set explicitly to `'low'`; the API rejects with `400 BadRequest`. The benchmark therefore uses the API default `reasoning_effort='medium'` with `temperature=0` (matching all other models in the matrix). A controlled 2×2 experiment on cs-001..005 (5 prompts × 2 GPT-5.4 models) decomposed the variable contributions: `temperature 0→1` inflates cost by 52% on flagship and 93% on mini (primarily through 1.8–2.5× longer outputs from sampling diversity); `reasoning_effort medium→low` at `temperature=1` reduces cost by 6% on flagship and 24% on mini (the actual reasoning overhead). The cheapest available configuration is `medium + temp=0`, which is 43–46% cheaper than `low + temp=1`. Production teams setting `reasoning_effort='low'` explicitly for non-reasoning workloads should be aware that the API forces `temperature=1` in that mode, and the temperature side-effect costs more than the reasoning_effort saves.
+
+The decomposition data lives in the `results` table tagged with `optimisation_config.experimental_comparison=true` (50 rows across two run_ids covering medium+temp=1, low+temp=1, plus yesterday's medium+temp=0 baseline). Day 12 main analysis filters those rows out to avoid mixing methodology-comparison data with the production benchmark.
+
+A separate compounding finding from the same re-measurement: caching engagement on GPT-5.4 is flaky in some configurations (1 of 5 prompts on `gpt-5.4` showed cache-read returning `cached_tokens=0` despite cache-write succeeding). Day 7 production tolerates this via the `caching_unavailable` row pattern that mirrors `compression_unavailable` — a single-prompt cache miss no longer crashes the full benchmark sweep.
+
 ## Day 6+ orchestration: batch submit/retrieve split, compression timing, dynamic budget gate
 
 Three architectural decisions about the Day 6+ runner orchestration, captured before the lever modules and orchestrator land.
@@ -184,3 +192,21 @@ The 30-prompt compression run on Day 8 is bounded at ~30 × 1.6s ≈ **48s** of 
 ### Orchestrator semantics: dynamic phased plan with budget gate before compression
 
 The orchestrator runs phases in sequence: `baseline` → `caching` → `output_cap` → `batch_submit` → (Day 7 ends; Day 8 starts) → `batch_retrieve` → `budget_check` → `compression_decide` → `compression_run`. The budget gate sits between `batch_retrieve` and `compression_run`, implementing the four-tier ladder from PRD §9 Day 8: full matrix if >£180 remaining under the £300 cap, 60-prompt stratified subset if >£120, 30-prompt subset if >£80, operator's call (15-prompt subset or skip) if £40–80, skip entirely if <£40. The `compression_decide` phase reads `runs.cost_so_far_gbp`, computes the chosen tier, and writes the decision (tier name + rationale + remaining headroom) to a phase log; `compression_run` then iterates the chosen subset. Phase ordering is dynamic in the sense that `compression_run`'s behaviour depends on the budget state at execution time rather than on a predetermined config — the orchestrator records the actual decision in the run log, so the Day 12 analysis and the writeup can cite which compression tier actually ran (and why) rather than guessing.
+
+## Skip-if-exists semantics
+
+The orchestrator's skip-if-exists logic was hardened during Day 6–9 in two passes. First, batch and sync result rows are now distinguished as separate levers (`lever='batch'` vs `lever='baseline'`) so the same prompt+model can produce both rows in a single run. Second, the skip-if-exists query was made `run_id`-aware so each run produces independent measurements rather than reusing rows from prior runs. The latter fix surfaced during Day 9 backfill when 33 expected baseline/output_cap/compression rows were absent from the production run because prior dry-run rows were silently blocking insertion via shared `(prompt_id, model, lever, config_hash, run_attempt)` keys. Both fixes ensure runs produce reproducible, isolated datasets.
+
+The fix required pairing application-level scoping with a corresponding schema UNIQUE constraint update — the application logic determines when skip-if-exists fires, but the schema constraint determines what duplicate-prevention the DB enforces. Either alone is insufficient: app-only would produce IntegrityErrors at insert time; schema-only would allow duplicate rows to accumulate. Both layers must agree on what "duplicate" means.
+
+## Tier-1 deterministic scoring (Day 9)
+
+Tier-1 scoring derives criteria from each prompt's `tier_1_deterministic.expected` block — never from inspecting the model's response. A single normalisation pipeline (whitespace strip, markdown-fence strip, pre-JSON preamble strip, conditional smart-quote translation, single-level wrapper unwrap) is applied to every response regardless of provider/model; the steps that fired on each row are recorded in the new `normalisation_steps_applied` column so any provider-style asymmetry is visible in Day 12 analysis rather than hidden. Lever-aware pre-checks distinguish design-induced failure (output_cap truncation, `compression_unavailable` rows) from genuine model failure: a response at exactly the 200-token cap that parses cleanly is a genuine pass, not truncation; a response at the cap that fails to parse is `truncated_due_to_cap`, not `fail_format`. rag_qa answers split into a short-factoid bucket (≤3 words → expected substring of model answer) and a phrasal bucket (≥7 words → answer content deferred to Tier-2 judges, citations still scored deterministically); the corpus has zero answers in the 4–6 word gap, so the bucketing is unambiguous.
+
+### Pre-Tier-2 directional findings from the Day 9 dry run
+
+(1) **Compression as quality-destroyer.** Tier-1 deterministic checks show 35–50 percentage point pass rate loss across all four models when compression is applied to extraction-style prompts (LLMLingua-2 destroys field markers required for downstream parsing). The 15% cost savings come at material correctness cost; cost ratios in Day 12 must be quality-adjusted.
+
+(2) **Batch as cost-optimisation-not-quality-loss.** Batch lever rows show pass rates within 1–2 percentage points of baseline rows across all four models, validating that the published 50% batch discount is real with quality preserved.
+
+These are pre-Tier-2 directional signals; Day 10 judge scoring will refine them.
