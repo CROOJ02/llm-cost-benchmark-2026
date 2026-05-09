@@ -210,3 +210,7 @@ Tier-1 scoring derives criteria from each prompt's `tier_1_deterministic.expecte
 (2) **Batch as cost-optimisation-not-quality-loss.** Batch lever rows show pass rates within 1–2 percentage points of baseline rows across all four models, validating that the published 50% batch discount is real with quality preserved.
 
 These are pre-Tier-2 directional signals; Day 10 judge scoring will refine them.
+
+## Scope and limitations (v1)
+
+This benchmark measures four cost-optimisation levers across two providers' flagship/budget model pairs. The scope is deliberately narrow to enable rigorous methodology rather than broad coverage. v1 does not cover: Llama family models, Gemini family models, fine-tuned variants, multi-turn conversations, function-calling levers, or model-routing strategies. Statistical replication is single-shot per (prompt, model, lever) combination rather than averaged across multiple runs. v2 scope will be informed by community feedback and Phase 0.5 discovery conversations with production teams using the benchmark to inform their workload optimisation decisions.
