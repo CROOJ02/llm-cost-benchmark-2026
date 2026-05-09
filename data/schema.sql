@@ -86,8 +86,11 @@ CREATE TABLE IF NOT EXISTS batch_jobs (
     run_id TEXT NOT NULL,
     provider TEXT NOT NULL,           -- 'anthropic' / 'openai'
     model TEXT NOT NULL,
-    lever TEXT NOT NULL,              -- 'baseline' for the Day 7 batch sweep
-    status TEXT NOT NULL,             -- 'submitted' / 'in_progress' / 'completed' / 'failed' / 'expired'
+    lever TEXT NOT NULL,              -- 'batch' for the Day 7 batch sweep — distinct from
+                                      -- 'baseline' (sync) so result rows from retrieve coexist
+                                      -- with sync baseline rows on the same (prompt, model);
+                                      -- PRD §5 lists batch as its own lever in the matrix
+    status TEXT NOT NULL,             -- 'submitted' / 'in_progress' / 'completed' / 'failed' / 'expired' / 'timed_out' / 'cancelled'
     submitted_at TEXT NOT NULL,
     retrieved_at TEXT,
     completed_at TEXT,

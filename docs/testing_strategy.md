@@ -43,10 +43,22 @@ Levers: baseline, caching, output_cap, batch, compression.
 Expected cost: ~£0.50.
 Verifications (all five must pass):
 
-Row count. ~50 rows in results (8 baseline + 18 caching where engaged + 8 output_cap + 8 from batch retrieval + 8 compression). 4 batch_jobs rows. Haiku records "caching unavailable" rather than caching result rows.
+Row count. **44 rows in `results`** + **4 batch_jobs rows**, broken down per lever:
+
+| Lever        | Rows | Derivation                                                                                                                                                                                                       |
+| ------------ | ---: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| baseline     |    8 | 2 prompts × 4 models × 1 row                                                                                                                                                                                     |
+| caching      |   12 | 6 engaging (prompt, model) pairs × 2 NEW cells (cache_write + cache_read). Haiku 4.5 is below threshold for sum-015/020 → 2 unavailable pairs producing 0 rows. The baseline cell is shared with the run_baseline phase via skip-if-exists. |
+| output_cap   |    8 | 2 prompts × 4 models × 1 row                                                                                                                                                                                     |
+| batch        |    8 | 2 prompts × 4 models × 1 row at retrieve time, lever='batch' (distinct from sync baseline)                                                                                                                       |
+| compression  |    8 | 2 prompts × 4 models × 1 row each — the engagement-bug fix records `compression_unavailable` cases as rows too (with `optimisation_config` marking the unavailable status), so Day 12 can distinguish "didn't try" from "tried, tokeniser asymmetry made it unavailable." |
+| **TOTAL**    | **44** |                                                                                                                                                                                                                  |
+
+**Sync baseline and batch processing produce distinct result rows** (lever='baseline' and lever='batch' respectively); Day 12 analysis computes the batch lever's cost ratio as cost(batch)/cost(baseline) per (prompt, model) pair. Without this distinction, the schema's UNIQUE(prompt_id, model, optimisation_lever, config_hash, run_attempt) constraint would collapse them and only the first-inserted variant would survive (this exact failure mode was caught and fixed during the Day 6 dry-run). Haiku records "caching unavailable" rather than caching result rows because both sum-015 and sum-020 are below the 4096-token Haiku threshold.
+
 Cost accounting. cost_so_far_gbp matches sum of individual cost_usd values converted via GBP_USD_RATE, accurate to £0.001.
-Engagement assertions. All caching write/read assertions pass per the existing engagement check logic. Compression rows show compressed_input_tokens < original_input_tokens.
-No errors. No NULLs on critical fields (result_id, run_id, model_version, response_text, cost_usd). No retry exhaustion. No phase-log error events.
+Engagement assertions. All caching write/read assertions pass per the existing engagement check logic. Compression rows show compressed_input_tokens < original_input_tokens, with `compression_unavailable` cases identifiable via `optimisation_config.compression_status='unavailable'`.
+No errors. No NULLs on critical fields (result_id, run_id, model_version, response_text, cost_usd) on success rows. (Compression-unavailable rows have `response_text=''` and `cost_usd=0.0` legitimately — distinguished from errored rows by `error IS NULL`.) No retry exhaustion. No phase-log error events except transient ones (network blip during long polls is logged as `event=error, payload.transient=True` and tolerated; other error events fail this check).
 Phase log readable. data/phase_log.jsonl parses cleanly as line-delimited JSON, contains expected events for each phase (start, complete) with no orphaned events.
 
 If any verification fails, debug before declaring Day 6 done.

@@ -52,7 +52,8 @@ _CHAT_ENVELOPE_OVERHEAD = 10
 
 def _get_encoder(model: str):
     """Return a tiktoken encoder for the model. Falls back to o200k_base
-    (the GPT-4o-family default) for unknown model names."""
+    (used by both the GPT-4o and GPT-5.x families) when tiktoken doesn't
+    recognise the dated snapshot or alias."""
     if model not in _encoder_cache:
         try:
             _encoder_cache[model] = tiktoken.encoding_for_model(model)
@@ -90,10 +91,15 @@ def call_openai(
     model: str,
     max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> dict[str, Any]:
+    # OpenAI renamed `max_tokens` to `max_completion_tokens` for the GPT-5.x
+    # family; the GPT-4o family is silently being deprecated to legacy support.
+    # We emit `max_completion_tokens` universally — both families accept it as
+    # of 2026-05. The internal parameter name (`max_tokens`) is kept for
+    # provider-agnostic call-site symmetry with run_anthropic.
     started = time.perf_counter()
     resp = client.chat.completions.create(
         model=model,
-        max_tokens=max_tokens,
+        max_completion_tokens=max_tokens,
         temperature=0,
         messages=[
             {"role": "system", "content": prompt.input.system},
@@ -121,6 +127,10 @@ def call_openai(
         "cache_creation_tokens": 0,
         "model_version": resp.model,
         "latency_ms": latency_ms,
+        # Truncation signal — OpenAI calls this 'finish_reason'; normalised to
+        # 'stop_reason' for cross-provider symmetry. 'length' indicates max_tokens
+        # truncation; 'stop' indicates natural completion.
+        "stop_reason": resp.choices[0].finish_reason,
     }
 
 
@@ -265,7 +275,7 @@ if __name__ == "__main__":
     print(f"run_id={rid} cap=£{cap:.4f} n={n} offset={offset} force={force} workers={workers}")
     started = time.perf_counter()
     results = run_many(
-        targets, model="gpt-4o", lever="baseline",
+        targets, model="gpt-5.4-2026-03-05", lever="baseline",
         run_id=rid, cap_gbp=cap, force_new_attempt=force,
     )
     wall_ms = int((time.perf_counter() - started) * 1000)

@@ -268,6 +268,9 @@ def run_one(
         run_id=run_id, run_attempt=run_attempt,
     )
 
+    # Phase 1 — API call. On rate-limit exhaustion, write an error row and
+    # release the reservation. On any other exception (auth error, network,
+    # adapter bug), release the reservation and re-raise.
     try:
         m = adapter.call_with_retry(
             client, prompt, model,
@@ -275,39 +278,57 @@ def run_one(
             optimisation_config=optimisation_config,
         )
     except adapter.rate_limit_error as e:
+        try:
+            row["error"] = f"RateLimitError after {max_retries + 1} attempts: {e}"
+            row["output_format_valid"] = 0
+            with sqlite3.connect(db_path) as conn:
+                _insert_row(conn, row)
+                conn.commit()
+        finally:
+            _release_reservation(run_id=run_id, estimated_gbp=est_gbp, db_path=db_path)
+        return {**row, "skipped": False, "stop_reason": None}
+    except Exception:
         _release_reservation(run_id=run_id, estimated_gbp=est_gbp, db_path=db_path)
-        row["error"] = f"RateLimitError after {max_retries + 1} attempts: {e}"
-        row["output_format_valid"] = 0
+        raise
+
+    # Phase 2 — accounting + insert. Wrapped so that any failure releases the
+    # original reservation rather than leaving phantom reserved cost in the
+    # cap accumulator. The reconcile UPDATE is folded into the same SQLite
+    # transaction as the row insert so we never end up with a row inserted
+    # but the cost not booked (or vice versa).
+    try:
+        cache_creation_tokens = m.get("cache_creation_tokens", 0) or 0
+        cost_usd = estimate_cost_usd(
+            model, m["input_tokens"], m["output_tokens"],
+            cached_tokens=m["cached_tokens"],
+            cache_creation_tokens=cache_creation_tokens,
+        )
+        cost_gbp = usd_to_gbp(cost_usd)
+        delta_gbp = cost_gbp - est_gbp
+        row.update({
+            "input_tokens": m["input_tokens"],
+            "output_tokens": m["output_tokens"],
+            "cached_tokens": m["cached_tokens"],
+            "cache_creation_tokens": cache_creation_tokens,
+            "latency_ms": m["latency_ms"],
+            "cost_usd": cost_usd,
+            "response_text": m["response_text"],
+            "model_version": m["model_version"],
+        })
         with sqlite3.connect(db_path) as conn:
             _insert_row(conn, row)
+            conn.execute(
+                "UPDATE runs SET cost_so_far_gbp = cost_so_far_gbp + ? WHERE run_id = ?",
+                (delta_gbp, run_id),
+            )
             conn.commit()
-        return {**row, "skipped": False}
+    except Exception:
+        _release_reservation(run_id=run_id, estimated_gbp=est_gbp, db_path=db_path)
+        raise
 
-    cache_creation_tokens = m.get("cache_creation_tokens", 0) or 0
-    cost_usd = estimate_cost_usd(
-        model, m["input_tokens"], m["output_tokens"],
-        cached_tokens=m["cached_tokens"],
-        cache_creation_tokens=cache_creation_tokens,
-    )
-    cost_gbp = usd_to_gbp(cost_usd)
-    _reconcile_actual(
-        run_id=run_id, estimated_gbp=est_gbp, actual_gbp=cost_gbp, db_path=db_path,
-    )
-    row.update({
-        "input_tokens": m["input_tokens"],
-        "output_tokens": m["output_tokens"],
-        "cached_tokens": m["cached_tokens"],
-        "cache_creation_tokens": cache_creation_tokens,
-        "latency_ms": m["latency_ms"],
-        "cost_usd": cost_usd,
-        "response_text": m["response_text"],
-        "model_version": m["model_version"],
-    })
-
-    with sqlite3.connect(db_path) as conn:
-        _insert_row(conn, row)
-        conn.commit()
-    return {**row, "skipped": False}
+    # stop_reason is not a DB column — threaded through the return dict for
+    # callers (the output_cap smoke and Day 9 truncation diagnostics) only.
+    return {**row, "skipped": False, "stop_reason": m.get("stop_reason")}
 
 
 def run_many(

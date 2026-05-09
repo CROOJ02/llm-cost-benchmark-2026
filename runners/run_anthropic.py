@@ -117,6 +117,11 @@ def call_anthropic(
         "cache_creation_tokens": getattr(resp.usage, "cache_creation_input_tokens", 0) or 0,
         "model_version": resp.model,
         "latency_ms": latency_ms,
+        # Truncation signal for the output_cap lever. 'max_tokens' indicates the
+        # response was clipped at the cap; 'end_turn' / 'stop_sequence' indicate
+        # natural completion. Not persisted to DB (no column), threaded back via
+        # run_one's return dict for diagnostics only.
+        "stop_reason": resp.stop_reason,
     }
 
 

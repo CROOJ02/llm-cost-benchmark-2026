@@ -35,7 +35,7 @@ This is research, not product. Code, data, and writeup are all public. Methodolo
 
 - **5 task categories** grounded in 2026 production AI use cases
 - **20 prompts per category** (22 for extraction, with the two missing-field tests added in Day 2 review) = **102 prompts total**, varying complexity (easy/medium/hard)
-- **4 models tested**: Claude Sonnet 4.6, Claude Haiku 4.5, GPT-4o, GPT-4o-mini
+- **4 models tested**: Claude Sonnet 4.6, Claude Haiku 4.5, GPT-5.4, GPT-5.4-mini (pinned to dated snapshots — see §4)
 - **5 optimisation levers**: baseline, prompt caching, output capping, batch processing, prompt compression
 - **Tiered scoring**: deterministic rubrics (Tier 1), dual-judge blind evaluation (Tier 2), human arbitration on disagreements (Tier 3)
 - **Public writeup** of 2,500–3,500 words covering methodology, findings, cross-category patterns, and InferOps positioning paragraph
@@ -131,12 +131,16 @@ Each category gets 20 prompts, 7 easy / 7 medium / 6 hard. All prompts use synth
 
 Four models, two providers. Captured `model_version` strings on every API call to track silent updates.
 
-| Tier | Model             | Provider  | Why included                                        |
-| ---- | ----------------- | --------- | --------------------------------------------------- |
-| Top  | Claude Sonnet 4.6 | Anthropic | Industry-default top-tier for B2B SaaS AI           |
-| Top  | GPT-4o            | OpenAI    | Most-used proprietary alternative to Sonnet         |
-| Mid  | Claude Haiku 4.5  | Anthropic | Industry-default cheaper-tier comparison for Sonnet |
-| Mid  | GPT-4o-mini       | OpenAI    | Industry-default cheaper-tier comparison for GPT-4o |
+| Tier | API alias (in code)   | Resolves to (snapshot)         | Provider  | Why included                                        |
+| ---- | --------------------- | ------------------------------ | --------- | --------------------------------------------------- |
+| Top  | `claude-sonnet-4-6`   | claude-sonnet-4-6 (May 2026)   | Anthropic | Industry-default top-tier for B2B SaaS AI           |
+| Top  | `gpt-5.4-2026-03-05`  | gpt-5.4 (5 Mar 2026 snapshot)  | OpenAI    | Current OpenAI flagship                             |
+| Mid  | `claude-haiku-4-5`    | claude-haiku-4-5 (May 2026)    | Anthropic | Industry-default cheaper-tier comparison for Sonnet |
+| Mid  | `gpt-5.4-mini-2026-03-17` | gpt-5.4-mini (17 Mar 2026)  | OpenAI    | Current OpenAI budget-tier; pairs with GPT-5.4      |
+
+**Reproducibility note on OpenAI model IDs:** dated snapshots pinned, not aliases. The `gpt-5.4` alias resolves to whatever snapshot OpenAI considers current at call time, which would invalidate later re-runs once a new dated snapshot ships. Pinning to `gpt-5.4-2026-03-05` and `gpt-5.4-mini-2026-03-17` guarantees the benchmark numbers are reproducible against a frozen target. Anthropic family aliases are stable enough across updates that we do not need to pin equivalent dated suffixes there.
+
+**Model-currency revision (Day 6):** the original PRD specified GPT-4o and GPT-4o-mini. By Day 6 (May 2026) those were one major OpenAI generation behind: GPT-5 launched August 2025, GPT-5.4 family was the current production lineup, and GPT-4o had been retired from ChatGPT on 13 Feb 2026 (still callable via API, but on lower-priority infrastructure — observed empirically as 4h+ batch-API queue waits on `gpt-4o-mini` during Day 6 dry-run). Updated to `gpt-5.4` + `gpt-5.4-mini` so the benchmark reflects what a developer choosing OpenAI in May 2026 would actually pick. Day 5 caching numbers measured against GPT-4o are preserved as historical record in the methodology doc; new caching numbers measured against GPT-5.4 supplement them and are the figures cited in the published writeup.
 
 **Models explicitly excluded from v1:** Gemini Flash 2.5, Mistral Large, Cohere Command R+, open-source models (Llama, DeepSeek, Qwen). Writeup acknowledges this is a coverage limitation. Future rounds may extend.
 
@@ -146,12 +150,14 @@ Four models, two providers. Captured `model_version` strings on every API call t
 
 ## 5. Optimisation Levers
 
-| Lever                      | Sonnet 4.6                         | Haiku 4.5                          | GPT-4o                         | GPT-4o-mini                    |
+| Lever                      | Sonnet 4.6                         | Haiku 4.5                          | GPT-5.4                        | GPT-5.4-mini                   |
 | -------------------------- | ---------------------------------- | ---------------------------------- | ------------------------------ | ------------------------------ |
 | Baseline (no optimisation) | ✓                                  | ✓                                  | ✓                              | ✓                              |
 | Prompt caching             | ✓ (configured via `cache_control`) | ✓ (configured via `cache_control`) | ✓ (observed automatic caching) | ✓ (observed automatic caching) |
-| Output cap                 | ✓ (`max_tokens=200`)               | ✓                                  | ✓                              | ✓                              |
+| Output cap                 | ✓ (`max_completion_tokens=200`)    | ✓ (`max_tokens=200`)               | ✓ (`max_completion_tokens=200`)| ✓ (`max_completion_tokens=200`)|
 | Batch processing           | ✓ (Anthropic batch API)            | ✓                                  | ✓ (OpenAI batch API)           | ✓                              |
+
+**Batch is a distinct lever, not a variant of baseline.** In the results table, sync baseline rows have `optimisation_lever='baseline'` and batch retrieval rows have `optimisation_lever='batch'`. Both coexist for the same (prompt_id, model) pair via the schema's lever-aware unique constraint, so Day 12 analysis can compute batch's cost ratio directly as `cost(batch) / cost(baseline)` per (prompt, model) without needing two separate runs. The schema column comment in `data/schema.sql` and the lever default in `runners/lever_batch.submit_batch` both reflect this convention.
 | Prompt compression         | ✓ (LLMLingua-2 client-side)        | ✓                                  | ✓                              | ✓                              |
 
 **Day 1 verification:** before committing to the full matrix, verify on Day 1 that LLMLingua-2 runs acceptably on James's Mac (CPU, no GPU). If it doesn't, the compression lever is dropped and noted as a documented limitation.

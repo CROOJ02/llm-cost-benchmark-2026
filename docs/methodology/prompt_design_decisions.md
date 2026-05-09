@@ -100,6 +100,67 @@ For **GPT-4o-mini** ($0.15/MTok input, $0.60/MTok output) applied to our test se
 
 A production user applying these findings should plug in their own `input_share`, `output_share`, and (for OpenAI) the cached fraction implied by their prompt length modulo 1024. Workloads with a high output share (e.g. long-form generation from short prompts) will see shallower cost savings than ours; workloads with very long prompts well above 1024-token multiples will see deeper savings on OpenAI as the chunked-caching tail becomes a smaller fraction of total input.
 
+### Day 6 model-currency revision: GPT-4o → GPT-5.4 family, OpenAI re-measurement
+
+#### Why the swap
+
+The Day 5 OpenAI numbers above were measured against `gpt-4o` and `gpt-4o-mini`, the most recent OpenAI flagship and budget-tier models *at the time of Day 5 (4 May 2026)*. Five days later, on Day 6 (8 May 2026), this turned out to be one major OpenAI generation behind. OpenAI's GPT-5 family launched August 2025; GPT-5.1, 5.2, 5.3 followed across late 2025 and Q1 2026; GPT-5.4 (`gpt-5.4-2026-03-05`) and `gpt-5.4-mini-2026-03-17` are the current production lineup at the time of the Day 6 dry-run; GPT-5.5 launched 23 April 2026 but does not have a `-mini` companion (only `gpt-5.5-pro`), so the cleanest flagship/budget pair for our benchmark is GPT-5.4 + GPT-5.4-mini. GPT-4o was retired from the consumer ChatGPT product on 13 February 2026; it remains callable via the API but on lower-priority infrastructure — we observed this empirically as a 4h+ batch-API queue wait on `gpt-4o-mini` during the Day 6 Layer 4 dry-run, with `gpt-4o` and `gpt-4o-mini` synchronous calls still working in seconds. Switching to GPT-5.4 family makes the benchmark numbers reflect what a developer choosing OpenAI in May 2026 actually picks.
+
+The Day 5 GPT-4o numbers above are preserved as historical record. The figures cited in the published writeup are the GPT-5.4 numbers below. Both Anthropic models (Sonnet 4.6, Haiku 4.5) are unchanged — Anthropic's lineup is current.
+
+#### What changed in pricing
+
+GPT-5.4 family pricing (verified 8 May 2026 against `developers.openai.com/api/docs/pricing`, corroborated against `benchlm.ai` and `devtk.ai`):
+
+| Model         | Input $/MTok | Output $/MTok | Cache-read multiplier | Δ vs GPT-4o equivalent |
+| ------------- | -----------: | ------------: | --------------------: | ---------------------- |
+| `gpt-5.4`      | 2.50         | 15.00         | **0.10**              | output 50% more expensive; cache-read 5× deeper discount |
+| `gpt-5.4-mini` | 0.75         | 4.50          | **0.10**              | input 5×, output 7.5× more expensive than GPT-4o-mini; cache-read 5× deeper discount |
+
+The cache-read multiplier shift is the biggest analytic change: 0.5× → 0.1×, matching Anthropic's published rate. **This invalidates the Day 5 GPT-4o cache_read multipliers as production-relevant figures**; the GPT-5.4 re-measurement below is the figure to cite.
+
+#### Re-measurement: caching multipliers on GPT-5.4 family (8 May 2026, sum-015..020)
+
+Running the same caching test (5 longest summarisation prompts: sum-015, 016, 017, 018, 020 at 3,158–3,838 Anthropic-counted tokens — well above the 1024-token OpenAI caching threshold) against the new models:
+
+| Model          | cost_write multiplier (min/median/max) | cost_read multiplier (min/median/max) | latency_read multiplier |
+| -------------- | -------------------------------------- | ------------------------------------- | ----------------------- |
+| `gpt-5.4`      | 0.428 / 0.511 / 0.952×                 | **0.411 / 0.475 / 0.494×**            | 0.816 / 0.942 / 0.999×  |
+| `gpt-5.4-mini` | 0.390 / 0.423 / 0.456×                 | **0.377 / 0.425 / 0.482×**            | 0.816 / 0.978 / 1.144×  |
+
+**Comparison vs Day 5 GPT-4o numbers** — improvement is real but smaller than the naïve 5× cache_read_mult shift would suggest:
+
+- GPT-4o cost_read median **0.617×** → GPT-5.4 cost_read median **0.475×** (~**23% improvement** in the cost-saving ratio)
+- GPT-4o-mini cost_read median **0.591×** → GPT-5.4-mini cost_read median **0.425×** (~**28% improvement**)
+
+**Why the improvement is ~25–30% instead of 5×.** Re-applying the cost-dilution formula `M ≈ (input_share × cached_input_discount) + (output_share × 1.0)` with the new pricing:
+
+For **GPT-5.4** ($2.50/MTok input, $15.00/MTok output) on ~3,000 input + ~225 output tokens:
+- input_share = (3,000 × $2.50) / (3,000 × $2.50 + 225 × $15.00) = $7,500 / $10,875 ≈ **0.69**
+- output_share ≈ **0.31** (vs 0.15 on GPT-4o — output dilution doubled because GPT-5.4 charges 50% more per output token)
+- Predicted M (assuming all input cached at 0.1×) ≈ 0.69 × 0.10 + 0.31 × 1.0 = 0.069 + 0.31 = **0.38**
+- Observed median: **0.475×** — above the formula's floor for the same chunked-caching reason as Day 5 (cached_tokens land in 1024-token blocks, leaving an uncached tail that's billed at full rate; sum-015 at 3,000+ tokens has ~1,000 token tail uncached, raising the effective cached_input_discount from 0.10 toward ~0.40 in proportion).
+
+For **GPT-5.4-mini** ($0.75/MTok input, $4.50/MTok output) on the same prompts:
+- input_share = (3,000 × $0.75) / (3,000 × $0.75 + 225 × $4.50) = $2,250 / $3,263 ≈ **0.69**
+- output_share ≈ **0.31** (mini and flagship share the same 6:1 input-to-output rate ratio, so input/output cost shares are identical)
+- Predicted M ≈ 0.69 × 0.10 + 0.31 × 1.0 = **0.38**
+- Observed median: **0.425×** — closer to the formula floor than GPT-5.4. The smaller absolute prices may make 1024-token tail effects less impactful in dollar terms, but the percentage shape is the same.
+
+**The headline finding for the writeup is the doubled output-share.** Going from GPT-4o to GPT-5.4 raised output cost share from ~0.15 to ~0.31 of total bill on our prompt sizes — output cost now dominates input cost more than it did, so even a perfect 0× cache_read multiplier on the input portion couldn't drop total cost below the output-share floor (~0.31 here). Day 12 production-recommendation framing should emphasise this: caching's headline cost-saving on GPT-5.x is bounded by output share much more tightly than on GPT-4o, despite the deeper underlying input discount.
+
+**Cache-write multiplier note.** The 0.952× outlier for sum-018 on GPT-5.4 is consistent with the OpenAI cache-warming asymmetry documented above (auto-caching populates the cache on prior calls within the 5-10 min TTL window; the labelled "write" call may already see a partial cache hit). The GPT-5.4-mini write multipliers (0.39–0.46) cluster cleanly with its read multipliers — both are observations of the same underlying cached-call cost. The Anthropic cache-write multiplier remains the only directly observable write number.
+
+#### Day 6 finding: OpenAI auto-caching is account-level and contaminates baseline measurements across sessions
+
+OpenAI's automatic prompt caching is **not session-bound** — it lives at the API account level and persists for the documented 5–10 minutes of inactivity (up to one hour). Any prior call against the same prompt + model leaves cache state that contaminates subsequent "baseline" measurements: the next caller sees `cached_tokens > 0` on what is supposed to be a cold call, and gets billed at the cache-read rate for the cached portion.
+
+This was observed empirically during the Day 6 Layer 4 dry-run. The dry-run's `run_baseline` phase on `gpt-5.4-2026-03-05` produced rows with `cached_tokens=2816` for both sum-015 and sum-020 — because the GPT-5.4 caching smoke test had run on the same prompts ~2 minutes prior. The dry-run's "sync baseline" cost numbers for gpt-5.4 were ~50% lower than they should have been; methodologically the baseline measurement was invalid for those rows.
+
+**Day 7 risk.** The full benchmark's baseline phase MUST run on cold cache state. If smoke testing or any prior runs touched the prompts in the last ~10–15 minutes, baseline measurements for those prompts will be artificially cheap and methodologically invalid. Mitigation in code: `runners/orchestrator.run_baseline` checks each result row for `cached_tokens > 0` and emits a `phase='baseline', event='warning', payload.warning='baseline_cache_contamination'` event to the phase log. This does not prevent the contaminated measurement (caching is server-side and unstoppable from our side), but creates an auditable signal so Day 12 analysis can flag affected rows. Operational mitigation: schedule Day 7's baseline phase as the first call after a ≥15 min quiet window, OR use prompts that have never been touched by smoke runs in the same calendar day. The smoke testing phases (Day 5–6) by design touched only sum-015..020 plus cs-001..005; the production baseline will hit the full 102 prompts, of which ~92 will be cold by virtue of never having been run before in any context.
+
+Anthropic's `cache_control: ephemeral` is opt-in: baseline calls without `cache_control` do NOT engage Anthropic's cache regardless of prior calls. This contamination risk is OpenAI-specific.
+
 ## Day 6+ orchestration: batch submit/retrieve split, compression timing, dynamic budget gate
 
 Three architectural decisions about the Day 6+ runner orchestration, captured before the lever modules and orchestrator land.
@@ -115,6 +176,8 @@ The split is load-bearing for two reasons. First, batch processing on both provi
 The compression lever invokes LLMLingua-2 at call time, transforming the prompt body before the API request, rather than pre-computing compressed prompts and storing them as artefacts. LLMLingua-2 compression timing measured 2026-05-05 on Mac CPU against actual benchmark prompts: **cold path** (first compression after model load) **1.50s against sum-001** at 1,589 Anthropic input tokens (LLMLingua-2's BERT tokenizer counts 1,379); **warm path** (subsequent compression, model in memory) **1.59s against sum-020** at 3,838 Anthropic input tokens (LLMLingua-2 count 3,356). Compression ratios observed (compressed / original by LLMLingua-2's count): **50.5% on sum-001, 48.5% on sum-020** — both close to the requested `rate=0.5` target.
 
 Compression ratios reported by LLMLingua-2 are computed in its own tokenizer's counts; the actual cost saving on the API side is determined by Anthropic's re-tokenization of the compressed string. The lever measures both: `original_input_tokens` and `compressed_input_tokens` in `optimisation_config` are recorded using Anthropic's `count_tokens` for both values, ensuring the compression ratio Day 12 analyses reflects what was actually billed. **This is a binding requirement on `lever_compression.py`: it must call Anthropic's `count_tokens` against the compressed string to get the billable token count, not record LLMLingua-2's claimed compressed count.** The `optimisation_config` column is `TEXT` in SQLite (functionally JSON via the json1 extension); typical compression configs serialise to ~80 bytes, well below any practical limit.
+
+**Compression target vs billed reduction (Day 6 finding).** LLMLingua-2 with `rate=0.5` produced **47.7% reduction** in its own BERT-tokenizer counts on sum-015 (3,055 → 1,458 BERT tokens) but only **44.5% reduction** in Anthropic's `count_tokens` (3,348 → 1,858 Anthropic tokens). The ~3 percentage-point gap reflects that LLMLingua-2 optimises sequence selection for the tokenizer it was trained against; the resulting compressed string then re-tokenises differently in production tokenizers. Production developers enabling LLMLingua-2 expecting `rate=0.5` to mean 50% billed input reduction will observe a consistently lower (~45%) actual reduction. The Day 12 analysis reports both LLMLingua-2 BERT-counted ratios (for comparing against the compressor's stated behaviour) and Anthropic/OpenAI `count_tokens`-based ratios (for production cost reasoning). The cross-provider implication is one step further: the same compressed string re-tokenised by OpenAI's `tiktoken` (`o200k_base` on the GPT-4o family) will produce yet another count, so the ~45% Anthropic figure is not directly portable across providers either.
 
 The 30-prompt compression run on Day 8 is bounded at ~30 × 1.6s ≈ **48s** of total CPU overhead. **Init cost: 8.6s per orchestrator process** (model load from local disk; one-time per session, paid once per Day 8 run, paid again on any restart). The 48s compression total is exclusive of this 8.6s init. Runtime compression keeps the lever's contract self-contained (input prompt → output result, with compression as one of the runner's internal levers) and avoids a separate preprocessing artefact that would need its own hash-keyed cache, refresh logic, and methodology footprint.
 

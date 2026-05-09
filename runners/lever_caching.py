@@ -254,11 +254,13 @@ _ADAPTERS_BY_NAME = {
 }
 
 _PROVIDER_FOR_MODEL = {
-    "claude-sonnet-4-6": "anthropic",
-    "claude-haiku-4-5":  "anthropic",
-    "claude-opus-4-6":   "anthropic",
-    "gpt-4o":            "openai",
-    "gpt-4o-mini":       "openai",
+    "claude-sonnet-4-6":       "anthropic",
+    "claude-haiku-4-5":        "anthropic",
+    "claude-opus-4-6":         "anthropic",
+    "gpt-5.4":                 "openai",
+    "gpt-5.4-2026-03-05":      "openai",
+    "gpt-5.4-mini":            "openai",
+    "gpt-5.4-mini-2026-03-17": "openai",
 }
 
 
@@ -285,7 +287,7 @@ if __name__ == "__main__":
     print(f"run_id={rid} cap=£{cap:.4f} prompts={[p.prompt_id for p in targets]} force={force}")
 
     overall: dict[str, dict[str, Any]] = {}
-    for model in ["claude-sonnet-4-6", "claude-haiku-4-5", "gpt-4o", "gpt-4o-mini"]:
+    for model in ["claude-sonnet-4-6", "claude-haiku-4-5", "gpt-5.4-2026-03-05", "gpt-5.4-mini-2026-03-17"]:
         adapter = _adapter_for_model(model)
         print(f"\n=== {model} ({adapter.name}) ===")
         started = time.perf_counter()
