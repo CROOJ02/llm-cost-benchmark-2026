@@ -211,6 +211,50 @@ Tier-1 scoring derives criteria from each prompt's `tier_1_deterministic.expecte
 
 These are pre-Tier-2 directional signals; Day 10 judge scoring will refine them.
 
+## Tier-2 dual-judge scoring (Day 10)
+
+Tier-2 is a dual-judge blind evaluation against per-prompt criteria. Judge A is Claude Opus 4.6 (same Anthropic family as two of the four test models — residual self-bias is acknowledged and quantified, see deliverables below). Judge B is `mistral-large-2512` (different family entirely — primary bias control). Each judge call covers one (prompt, lever) and shows 4 model responses anonymised as A/B/C/D in a deterministic-seed-randomised order; lever metadata is structurally hidden because all 4 responses in a single call come from the same lever. Both judges score on a 0.0–1.0 continuous scale with PRD-anchored partial-credit guidance. Reference answers are shown for RAG (`tier_1.expected.answer`) and reasoning (`tier_1.expected.final_answer`) where they canonically exist; customer_support and summarisation are scored against criteria alone (no reference exists).
+
+### Disagreement rate calibration
+
+Disagreement rate calibrated against published dual-judge benchmarks (Chatbot Arena, LLM-as-Judge studies) showing 8–15% disagreement on differing-family judges at 0.2 threshold; PRD's earlier 1% estimate was optimistic for our task mix (summarisation + reasoning chains drive higher disagreement). Tier 3 human arbitration time budget revised from "30–60 min" to "60–90 min" to reflect the empirically expected 100–190 disagreement cases.
+
+### Day 10 dry-run validation
+
+Day 10 dry-run validation (32 calls, 64 row-scores per judge): all calls parsed cleanly, score range [0.10, 1.00], 12.5% disagreement rate matching empirical calibration. Disagreement pattern surfaced a methodology finding worth flagging: Opus and Mistral interpret partial-credit on compressed/incomplete responses differently — Opus tends harsher (0.10–0.15 "wrong on central facts"), Mistral tends gentler (0.50 "addresses but incomplete"). Both interpretations are defensible against the rubric. Production Day 11 arbitration will likely cluster on these cases. The 0.5 band on the partial-credit scale is genuinely ambiguous; reported limitation.
+
+### Cross-judge calibration offset (empirically measured)
+
+Cross-judge calibration offset (empirically measured Day 10 partial run, n=644 row-scores per judge): Mistral large 2512 systematically scores 7–9 percentage points higher than Opus 4.6 on both Anthropic and OpenAI responses (Anthropic Δ=−0.085, OpenAI Δ=−0.069). This is not self-bias (which would manifest as Opus rating Anthropic responses higher than OpenAI relative to Mistral's spread — not observed). It is a cross-judge calibration offset: Mistral is more generous in absolute scoring across both provider families. The disagreement-detection threshold (|Δ| > 0.2) sits well above this calibration offset (~0.08), so genuine disagreements continue to fire correctly. The offset itself is documented as a limitation; cross-judge mean comparisons in Day 12 analysis must subtract the offset to interpret correctly.
+
+### Tier-2 bias audit deliverables
+
+Two explicit deliverables in the Day 12 analysis, not vague "verify no systematic bias" hand-waves:
+
+**(1) Position-bias audit table.** Computed across all 640 judge calls (320 per judge) × 4 position slots (A/B/C/D):
+
+```
+              A-slot mean   B-slot mean   C-slot mean   D-slot mean   row mean
+sonnet 4.6      X.XX           X.XX          X.XX          X.XX        X.XX
+haiku 4.5       X.XX           X.XX          X.XX          X.XX        X.XX
+gpt-5.4         X.XX           X.XX          X.XX          X.XX        X.XX
+gpt-5.4-mini    X.XX           X.XX          X.XX          X.XX        X.XX
+```
+
+Each cell = mean judge score across all calls where that model occupied that position slot. **Decision rule:** any cell deviating from its row mean by >0.03 is surfaced as a finding (mild) or limitation (if multiple cells move together). Computed per judge separately and pooled.
+
+**(2) Cross-judge self-bias quantum.** A single explicit calibration table:
+
+```
+                       Opus mean   Mistral mean   Δ (residual self-bias)
+Anthropic responses     X.XX        Y.YY            ZZZ
+OpenAI responses        X.XX        Y.YY            ZZZ
+```
+
+Each cell = mean judge score across all responses from the named family, by the named judge. **Decision rule:** if `|Δ|` > 0.05 for either provider's responses, surface as a documented limitation in the writeup. If both `|Δ|` < 0.05, judges agree on family-level quality and no limitation needs flagging.
+
+Both deliverables computed by the Day 12 analysis script (not the Day 10 judge runner — separation keeps the judge calls fast and lets the audit re-run on any subset). The position-to-model mapping is logged per judge call so both audits can run from the persisted `results.db` without replaying the API calls.
+
 ## Scope and limitations (v1)
 
 This benchmark measures four cost-optimisation levers across two providers' flagship/budget model pairs. The scope is deliberately narrow to enable rigorous methodology rather than broad coverage. v1 does not cover: Llama family models, Gemini family models, fine-tuned variants, multi-turn conversations, function-calling levers, or model-routing strategies. Statistical replication is single-shot per (prompt, model, lever) combination rather than averaged across multiple runs. v2 scope will be informed by community feedback and Phase 0.5 discovery conversations with production teams using the benchmark to inform their workload optimisation decisions.
