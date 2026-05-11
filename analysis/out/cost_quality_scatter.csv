@@ -1,0 +1,17 @@
+model,lever,n_rows,mean_canonical_score,mean_cost_usd,pareto_optimal,dominated_by_model,dominated_by_lever
+gpt-5.4-mini-2026-03-17,batch,80,0.8809,0.000557,1,,
+claude-haiku-4-5,batch,80,0.8123,0.00092,0,gpt-5.4-mini-2026-03-17,batch
+gpt-5.4-mini-2026-03-17,output_cap,80,0.857,0.000922,0,gpt-5.4-mini-2026-03-17,batch
+gpt-5.4-mini-2026-03-17,compression,80,0.6854,0.000929,0,gpt-5.4-mini-2026-03-17,batch
+gpt-5.4-mini-2026-03-17,baseline,80,0.8871,0.00117,1,,
+claude-haiku-4-5,compression,80,0.587,0.001502,0,gpt-5.4-mini-2026-03-17,baseline
+claude-haiku-4-5,output_cap,80,0.7311,0.001599,0,gpt-5.4-mini-2026-03-17,baseline
+claude-haiku-4-5,baseline,80,0.8111,0.001841,0,gpt-5.4-mini-2026-03-17,baseline
+gpt-5.4-2026-03-05,batch,80,0.9321,0.0021,1,,
+claude-sonnet-4-6,batch,80,0.8713,0.002791,0,gpt-5.4-2026-03-05,batch
+gpt-5.4-2026-03-05,output_cap,80,0.8834,0.003377,0,gpt-5.4-2026-03-05,batch
+gpt-5.4-2026-03-05,compression,80,0.7544,0.003436,0,gpt-5.4-2026-03-05,batch
+gpt-5.4-2026-03-05,baseline,80,0.9348,0.00422,1,,
+claude-sonnet-4-6,compression,80,0.7087,0.004416,0,gpt-5.4-2026-03-05,baseline
+claude-sonnet-4-6,output_cap,80,0.8429,0.00467,0,gpt-5.4-2026-03-05,baseline
+claude-sonnet-4-6,baseline,80,0.8885,0.005566,0,gpt-5.4-2026-03-05,baseline

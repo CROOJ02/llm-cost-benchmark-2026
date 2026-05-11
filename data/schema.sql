@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS results (
     -- by reading these alongside the active judge_b/c columns.
     judge_b_mistral_score REAL,
     judge_b_mistral_reasoning TEXT,
+    -- canonical_score (Day 12) is the single per-row Tier-2 quality number for
+    -- downstream analysis. Population rule:
+    --   - judge_disagreement_flag = 0 → canonical_score = mean(judge_a_score,
+    --     judge_b_score) (judges agreed, take the simple average)
+    --   - judge_disagreement_flag = 1 → canonical_score = human_score from
+    --     scoring/disagreements.csv (16 human-arbitrated + 64 median-canonical-
+    --     auto; both kinds carry a final canonical value in the CSV)
+    -- This column is the analysis-facing one; the judge_*_score columns remain
+    -- the underlying ingredients for audit and methodology surfaces.
+    canonical_score REAL,
     human_score REAL,
     final_score REAL,
     score_recomputed_at TEXT,
