@@ -28,9 +28,14 @@ benchmark_results.json.bak
 # Pytest
 .pytest_cache/
 
-# Project data — .db files are run-specific empirical results, not source.
+# Project data — local DB backups, dry-run DB, and transient logs gitignored.
 # data/schema.sql IS the source of truth for table shape and stays tracked.
+# data/results.db is committed at v1 ship time as the public benchmark
+# artefact (1,280 rows × 4 levers × judge scores) — the writeup cites it
+# directly. Backups (.bak-*), the Day 6 dry-run DB, and transient logs
+# (.jsonl) remain gitignored.
 data/*.db
+!data/results.db
 data/*.db.bak*
 data/*.jsonl
 

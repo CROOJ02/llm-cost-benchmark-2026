@@ -2,6 +2,62 @@
 
 This document records prompt-design choices that diverge from the PRD's literal specification, so the writeup methodology section can cite a single source.
 
+## Scope and rigor positioning
+
+This is v1 of an ongoing LLM cost-optimisation benchmarking effort. The methodology aims for empirical rigor sufficient to draw directional findings, suitable for industry consumption — not for peer-reviewed academic publication. v1 makes specific scope choices reflecting this:
+
+- **Two-judge panel (Opus 4.6 + GPT-5.5)** where both judges share families with test models (Opus with Sonnet 4.6 and Haiku 4.5; GPT-5.5 with the GPT-5.4 family). Self-enhancement bias is a known LLM-as-judge concern; v1 quantifies the cross-judge calibration asymmetry as a documented limitation rather than eliminating it via family-disjoint judges. The Day 11 panel-revision evaluated three replacement candidates after Mistral quality issues — see "Day 11 panel revision" below — and converged on the 2-judge panel after empirical validation rejected the Gemini option.
+- **Single-shot scoring per (prompt, model, lever, judge)** rather than averaged across multiple runs. Run-to-run variance is documented; statistical replication deferred to v2.
+- **Methodology decisions made under empirical pressure during Days 6–11** (skip-if-exists hardening, retry hardening, judge panel revision after Mistral quality issues) are documented in the methodology trail rather than pre-registered. v2 will be pre-registered against findings v1 surfaces.
+
+### Day 11 panel revision
+
+Day 11 panel revision: Mistral large 2512 was replaced after Day 10 analysis surfaced quality issues (non-determinism at temperature=0, score-reasoning desync, systematic missing of explicit criteria requirements with hallucinated completeness on truncated responses). Three replacement judges were evaluated:
+
+- **GPT-5.5: passed targeted validation.** Caught 4/4 Mistral-error cases including the truncated-output hallucination case. Deterministic at temperature=1 (API constraint). Adopted as Judge B.
+- **Gemini 2.5 Pro: passed initial smoke test but targeted validation on output_cap reasoning prompts revealed both directions of unreliability** — replicated Mistral's hallucinated completeness on truncated content (1/6 at-risk cases) AND extreme under-scoring (4/12 cases scored 0.00 despite substantial correct content visible before truncation). Rejected as panel member.
+- **Gemini 3.1 Pro Preview: rejected on operational grounds** (mandatory reasoning produced ~14 minutes per call latency, infeasible at sweep scale).
+
+Final v1 panel: Opus 4.6 + GPT-5.5. Same-family bias on both judges (Opus with Sonnet/Haiku in test set; GPT-5.5 with GPT-5.4 family in test set) is a documented limitation. v2 will explore family-disjoint alternatives (Grok 4, fine-tuned specialized judges) informed by this v1 validation experience.
+
+Empirical validation of panel revision (Day 11 GPT-5.5 sweep): The replacement of Mistral with GPT-5.5 reduced disagreement count by 52% (167 → 80 cases, 13.0% → 6.2%), eliminated cross-judge calibration offset (Anthropic family Δ: −0.077 → +0.024; OpenAI family Δ: −0.051 → −0.048; both now within the 0.05 documentation threshold), reduced direction asymmetry from 17/83 to 31/69, and eliminated position bias (0/16 cells deviate from row mean vs 5/16 with the original panel). GPT-5.5 mean score (0.823) sits between Opus (0.794, harshest) and the archived Mistral (0.874, most generous), positioning GPT-5.5 as a better-calibrated middle judge for this rubric.
+
+### Day 11 disagreement resolution methodology
+
+Day 11 disagreement resolution methodology: After the GPT-5.5 panel revision reduced disagreements to 80 (6.2% of Tier-2 rows, down from 167 / 13.0% with Mistral), a hybrid arbitration approach was applied:
+
+- **16 cases with |Δ| > 0.3 (the substantive disagreements)** received human arbitration by the benchmark operator, applying three documented principles: (i) Tier-2 criteria-only scoring (Tier-1 concerns excluded from Tier-2 score); (ii) content-vs-wrapper distinction (content failures 0.10–0.20, wrapper failures with correct content 0.50–0.85); (iii) reasoning quantity ≠ correctness (substance over detail when judges disagreed).
+- **64 cases with |Δ| ≤ 0.3 (minor disagreements)** received automatic resolution via median canonical (mean of judge_a and judge_b scores).
+- **Threshold choice (Δ > 0.3)** was based on the empirical distribution: 82% of disagreements clustered at Δ=0.20–0.30 where median canonical is empirically reasonable; only 16 cases (20%) crossed Δ > 0.3 where human judgment adds meaningful signal. Threshold yields complementary filtering: every case partitions cleanly between human-arbitrated and auto-resolved sets.
+- **Total arbitration time:** ~10 minutes. **Total disagreement-resolution cost:** £0 (auto-median) + operator time (human cases).
+
+Mistral's original scores are preserved in `judge_b_mistral_score`/`judge_b_mistral_reasoning` columns for transparency and v2 analysis. The Gemini integration code remains in `scoring/judge.py` (validated, available via `judge_names=("gemini",)`) but is not invoked in the v1 production panel; `judge_c_*` columns remain NULL after the v1 sweep.
+
+v2 scope will be informed by community feedback and Phase 0.5 discovery conversations with production teams. Specific v2 candidates: family-disjoint judges (Grok 4, specialized fine-tuned judges), expanded model coverage (Llama, Gemini test models), additional levers (fine-tuning, model routing). Pull requests welcomed.
+
+### GPT-5.5 judge temperature constraint (Day 11 operational finding)
+
+GPT-5.5 (Judge B in the final v1 panel, replacing Mistral) does NOT accept `temperature=0` — the API rejects any explicit temperature value other than the default 1.0 with `400: Unsupported value: 'temperature' does not support 0 with this model. Only the default (1) value is supported.` This is stricter than the GPT-5.4 family constraint (Day 6 finding: GPT-5.4 only rejects temp=0 when `reasoning_effort='low'` is set explicitly; at the default `medium` it accepts temp=0). For the GPT-5.5 judge we omit the temperature parameter entirely (default 1 applies). Validation showed GPT-5.5 deterministic in practice despite temp=1 — the response_format JSON mode + reasoning anchored the score (5/6 determinism re-fires showed exact reproducibility, 1 case showed 0.05 drift).
+
+Real-payload latency: GPT-5.5 ~8s per call. Within operational viability for 320-batch sweeps at concurrency 4.
+
+### Per-module retry classifier audit (Day 11 operational finding)
+
+Retry classifiers are per-module; `runners/*` and `scoring/*` maintain separate retry logic. The Day 11 GPT-5.5 integration surfaced that `scoring/judge.py` was missing OpenAI exception coverage despite OpenAI being used in `runners/`. The fix added explicit `openai.RateLimitError` / `openai.InternalServerError` / `openai.APIConnectionError` branches. Methodology lesson: presence of an SDK import elsewhere in the codebase ≠ presence of correct exception handling in the calling module.
+
+### Gemini judge model evaluation (Day 11 operational findings — both models rejected)
+
+The 3-judge panel initially planned to use `gemini-3.1-pro-preview` as the Google judge — Google's then-current frontier reasoning model. **Rejected on operational grounds:** mandatory reasoning mode produced ~14 minutes wall time per call even on trivial prompts (91 thinking tokens for a 1-token visible response). For a 320-batch sweep this is infeasible at any reasonable concurrency.
+
+Switched evaluation to `gemini-2.5-pro` (GA, June 2025 release). **Both Gemini Pro models require thinking mode** (cannot set `thinking_budget=0` on either; same `400 INVALID_ARGUMENT: This model only works in thinking mode` error on both). Gemini 2.5 Pro's thinking is much faster (~5–15 sec per real judge call). Operationally: thinking tokens are billed at the output rate and consume the `max_output_tokens` budget alongside visible output, so the Gemini judge uses `GEMINI_MAX_TOKENS=8192` (bumped from initial 4096 after the validation set's complex reasoning prompts hit the cap) and sums thinking + visible tokens into the cost accounting.
+
+**Gemini 2.5 Pro also rejected after targeted validation.** Initial smoke testing on simple prompts looked clean. Step-2 validation on 10 ground-truth cases revealed Gemini replicated Mistral's hallucinated-completeness failure on a truncated-output reasoning case. Targeted Step-2 follow-up validation on the 6 at-risk cases (output_cap + truncated + Mistral high score) plus 6 control cases revealed:
+
+- **1/6 at-risk cases hallucinated completeness** (rea-015 / gpt-5.4 / output_cap, reproduced across two independent calls — same exact failure mode as Mistral on the same case).
+- **4/12 cases showed extreme under-scoring** in the opposite direction (e.g. rea-013 / haiku / output_cap: Opus=0.70, Mistral=0.70, Gemini=0.00) — Gemini gave 0.00 to truncated reasoning prompts that contained substantial correct content visible before truncation.
+
+Combined unreliability rate of ~42% on truncated reasoning prompts (5/12 cases with |Gemini − Opus| > 0.3 in either direction) was judged disqualifying for v1. Gemini integration code remains in `scoring/judge.py` (validated against the API surface) and `judge_c_*` schema columns remain in place — both available for v2 evaluation but not invoked in the v1 production sweep. v2 will revisit Gemini 3.1 Pro once it reaches GA with bounded latency, alongside fully family-disjoint judge candidates (Grok 4, fine-tuned specialized judges).
+
 ## Length variance in easy-tier RAG and summarisation prompts
 
 The PRD specifies context lengths of 500–1500 words for RAG (§3 Cat 2) and 1500–3000 words for summarisation (§3 Cat 4). The committed prompt files run shorter than the PRD floor at the easy end of each category — RAG easies at roughly 400–480 words, summarisation easies at roughly 890–1180 words — and below the PRD upper bound across the rest of both categories. The design choice is deliberate: complexity is varied through the difficulty of the underlying task — citation precision in RAG, faithful coverage of main points in summarisation — not through the brute size of the input document. A short context with a directly stated answer is a cleaner test of "easy citation" than a longer context where the answer sentence is buried, and padding either category's easies with neutral background content would dilute what the easies are designed to test rather than improve it. Spot-checks on representative prompts (RAG rag-002 at the easy end with a single-sentence citation; summarisation sum-002 at 1177 words covering an article with multiple statistics and a nuanced thesis; summarisation sum-007 at 889 words covering a self-contained customer-comms email with a hallucination risk) confirmed the affected prompts hold up methodologically at their actual lengths. The writeup limitations section should note: "easy-tier inputs run shorter than the PRD spec range to keep the complexity gradient on task difficulty rather than input size."
@@ -226,6 +282,30 @@ Day 10 dry-run validation (32 calls, 64 row-scores per judge): all calls parsed 
 ### Cross-judge calibration offset (empirically measured)
 
 Cross-judge calibration offset (empirically measured Day 10 partial run, n=644 row-scores per judge): Mistral large 2512 systematically scores 7–9 percentage points higher than Opus 4.6 on both Anthropic and OpenAI responses (Anthropic Δ=−0.085, OpenAI Δ=−0.069). This is not self-bias (which would manifest as Opus rating Anthropic responses higher than OpenAI relative to Mistral's spread — not observed). It is a cross-judge calibration offset: Mistral is more generous in absolute scoring across both provider families. The disagreement-detection threshold (|Δ| > 0.2) sits well above this calibration offset (~0.08), so genuine disagreements continue to fire correctly. The offset itself is documented as a limitation; cross-judge mean comparisons in Day 12 analysis must subtract the offset to interpret correctly.
+
+### Three-judge disagreement methodology (Day 11, post-Mistral revision)
+
+Three-judge disagreement methodology (Day 11, post-Mistral revision): canonical score is the median of the three judges' scores. Disagreement flag fires when any single judge's score deviates from the median by more than 0.2. This generalises the existing 2-judge methodology (where median = mean of two and disagreement = |Δ| > 0.2) to a 3-judge panel without restructuring. The criterion captures "consensus break" rather than "any pair differs" — e.g., scores (0.3, 0.5, 0.7) have median 0.5 with all three within 0.2 of median, so no disagreement flag fires despite the (0.3, 0.7) pair spread of 0.4.
+
+### Day 11 reasoning re-fire methodology
+
+Day 11 initial reasoning re-fire (10 May 2026) attempted to preserve Day 10 scores while capturing reasoning, on the assumption that temperature=0 would produce reproducible scores. Empirical evidence proved this assumption wrong: Mistral specifically showed visible score-reasoning desyncs in 2 of 185 disagreement cases (rea-015 sonnet compression: Day 10 score 0.00, Day 11 reasoning describes correct answer; rag-010 gpt-5.4-mini compression: Day 10 score 0.90, Day 11 reasoning describes failures). Subtler drift was suspected throughout the dataset but not flag-detectable. Methodology revised: full re-fire of all 128 disagreement batches with aligned score+reasoning capture in a single API call. Arbitration target re-derived from the new aligned scores; some borderline cases (Δ just above 0.20 originally) now land in agreement and are scored canonically as the median of both judges. Mistral's non-determinism at temperature=0 is documented as a known limitation extending the cross-judge calibration offset finding.
+
+### Day 11 arbitration principles
+
+Day 11 arbitration principles (applied consistently across all 185 cases):
+
+**Principle 1 — Tier-2 criteria-only:** Arbitration scores reflect the response's satisfaction of the Tier-2 criteria text only. Defects caught separately by Tier-1 (malformed JSON, missing citation indices, schema violations) are not re-penalised in Tier-2. The two scoring tiers are orthogonal axes; Day 12 analysis can recombine them. Example application: rag-001 sonnet compression where the response correctly stated "2014" but had wrong supporting_sentences index — canonical score reflects the answer-phrasing criteria (high), not the citation error (Tier-1's concern).
+
+**Principle 2 — Content-vs-wrapper distinction:** For lever-induced failures (compression, output_cap), distinguish content failures from structural-wrapper failures.
+
+- **Content failures** (compressed/truncated reasoning that misses required substeps in the criteria, regardless of final answer): score 0.10–0.20. The lever destroyed the reasoning content.
+- **Structural-wrapper failures** (complete correct reasoning content visible but JSON wrapper truncated, or fences present but content correct): score 0.50–0.70. The reasoning satisfied the criteria; the wrapper failed.
+- **Combined failures** (truncated mid-content AND wrapper failed): score on the more severe failure mode.
+
+This distinction generalises across compression and output_cap; the principle is "criteria-strict on content; lever-aware on wrapper."
+
+**Principle 3 — Reasoning-quantity is not reasoning-correctness:** Opus tends to produce more detailed multi-criticism reasoning than Mistral. The arbiter should weigh whether the criticisms are substantive against the criteria, not merely count them. A one-sentence judgment that's right outweighs three-sentence reasoning that overcalls.
 
 ### Tier-2 bias audit deliverables
 

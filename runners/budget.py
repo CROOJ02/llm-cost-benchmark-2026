@@ -38,9 +38,21 @@ PRICING_USD_PER_MTOK: dict[str, dict[str, float]] = {
     "gpt-5.4-2026-03-05":      {"input": 2.50, "output": 15.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.00},
     "gpt-5.4-mini":            {"input": 0.75, "output":  4.50, "cache_read_mult": 0.10, "cache_creation_mult": 1.00},
     "gpt-5.4-mini-2026-03-17": {"input": 0.75, "output":  4.50, "cache_read_mult": 0.10, "cache_creation_mult": 1.00},
-    # Judges (Day 10)
+    # Judges (Day 10 + Day 11 3-judge revision)
     "claude-opus-4-6":         {"input": 15.00, "output": 75.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.25},
     "mistral-large-2512":      {"input":  2.00, "output":  6.00, "cache_read_mult": 1.00, "cache_creation_mult": 1.00},
+    # Gemini 2.5 Pro added Day 11 as Judge C. Pricing per Google AI for
+    # Developers (verified 2026-05-10): $1.25/$10 per 1M tokens for prompts
+    # under 200k context; $2.50/$15 above. Our judge calls are ~3-5K tokens,
+    # well below the 200k threshold. cache_read_mult 0.10 reflects 10% of base
+    # input price. (Original Gemini 3.1 Pro Preview choice was abandoned after
+    # smoke-testing revealed mandatory thinking caused ~14 min/call latency.)
+    "gemini-2.5-pro":          {"input":  1.25, "output": 10.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.00},
+    # GPT-5.5 added Day 11 as Judge B (replacing Mistral after the Day 10
+    # quality-issues finding). Pricing per OpenAI (verified 2026-05-10):
+    # $5/$30 per 1M tokens at standard tier (under 272K context). Output
+    # tokens INCLUDE reasoning tokens (default reasoning_effort='medium').
+    "gpt-5.5":                 {"input":  5.00, "output": 30.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.00},
 }
 
 # Per-category output-token estimates for the pre-call cap gate. Each value is

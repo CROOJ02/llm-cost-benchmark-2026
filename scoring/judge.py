@@ -33,6 +33,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import anthropic
+import openai
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 from mistralai import Mistral
 from mistralai import models as mistral_models
 
@@ -40,10 +44,41 @@ from runners._base import retry_after_from_error_body
 from runners.budget import estimate_cost_usd, usd_to_gbp
 from runners.schema import Prompt
 
-JudgeName = Literal["opus", "mistral"]
+# Day 11 revision: 3-judge panel. Mistral kept in JudgeName for the archive
+# path (judge_b_mistral_* columns); GPT-5.5 + Gemini added as new judges.
+# See methodology doc § "Scope and rigor positioning".
+JudgeName = Literal["opus", "mistral", "gpt55", "gemini"]
 
 OPUS_MODEL = "claude-opus-4-6"
 MISTRAL_MODEL = "mistral-large-2512"
+# GPT-5.5 judge model (released April 2026). Uses chat.completions API with
+# response_format={"type": "json_object"} for forced JSON output. Reasoning
+# tokens count toward max_completion_tokens (similar to o-series and Gemini)
+# at the default reasoning_effort='medium', so we use GPT55_MAX_TOKENS=4096
+# (vs JUDGE_MAX_TOKENS=1024 for Opus and Mistral) to leave room for both
+# reasoning + JSON output. completion_tokens reported by the API already
+# INCLUDES reasoning tokens, so cost accounting reads it directly without
+# the visible+thinking summing needed for Gemini.
+GPT55_MODEL = "gpt-5.5"
+GPT55_MAX_TOKENS = 4096
+# Gemini judge model: gemini-2.5-pro (GA, released June 2025). The Day 11
+# original choice of gemini-3.1-pro-preview was abandoned after smoke-testing
+# revealed it produced ~14 min wall time per call (operationally infeasible
+# for the 320-batch sweep). 2.5 Pro requires thinking mode too (cannot set
+# thinking_budget=0 — same `400: This model only works in thinking mode` as
+# 3.1 Pro), but its thinking is much faster (~5–10s per call vs ~14 min).
+# See methodology doc § "Gemini judge model selection".
+GEMINI_MODEL = "gemini-2.5-pro"
+
+# Gemini-specific max-tokens cap. Both 2.5 Pro and 3.1 Pro require thinking
+# mode; thinking tokens are billed against the candidates_token_count and
+# share the max_output_tokens budget with visible output. JUDGE_MAX_TOKENS
+# (1024) was insufficient — smoke-test showed thinking alone consumed all
+# 1024 leaving zero for the JSON response. Bumped 4096 → 8192 on Day 11
+# after the validation set's case 1 (rea-015 sonnet compression — complex
+# multi-step proration reasoning) hit the 4096 cap and returned an empty
+# response after 58s. 8192 leaves headroom for demanding reasoning prompts.
+GEMINI_MAX_TOKENS = 8192
 JUDGE_TEMPERATURE = 0.0
 JUDGE_MAX_TOKENS = 1024
 SCORE_LO, SCORE_HI = 0.0, 1.0
@@ -301,6 +336,14 @@ def _mistral_status_code(err: Exception) -> int | None:
     return getattr(err, "status_code", None) or getattr(err, "raw_status_code", None)
 
 
+def _gemini_status_code(err: Exception) -> int | None:
+    """google.genai.errors.APIError (parent of ClientError + ServerError)
+    carries .code as the HTTP status. Returns None when not a Gemini error."""
+    if not isinstance(err, genai_errors.APIError):
+        return None
+    return getattr(err, "code", None)
+
+
 def _retry_after_seconds(err: Exception, default: float) -> float:
     """Honour Retry-After header on rate-limit responses where present.
 
@@ -333,9 +376,10 @@ def _call_with_retry(
     retry-hardening pattern in runners/run_anthropic.py + run_openai.py.
 
     Catches and retries:
+      - anthropic.RateLimitError + anthropic.InternalServerError + APIConnectionError
+      - openai.RateLimitError + openai.InternalServerError + openai.APIConnectionError
       - mistralai SDKError with status in {429, 500, 502, 503, 504}
-      - anthropic.RateLimitError + anthropic.InternalServerError
-      - anthropic.APIConnectionError (transient network)
+      - google.genai.errors.APIError with status in {429, 500, 502, 503, 504}
     Re-raises any other exception immediately. Re-raises after max_retries.
     """
     last_err: Exception | None = None
@@ -349,6 +393,19 @@ def _call_with_retry(
             delay = _retry_after_seconds(e, JUDGE_RATE_LIMIT_DEFAULT_DELAY)
             time.sleep(delay)
         except (anthropic.InternalServerError, anthropic.APIConnectionError) as e:
+            last_err = e
+            if attempt >= max_retries:
+                break
+            delay = JUDGE_TRANSIENT_5XX_DELAYS[min(attempt, len(JUDGE_TRANSIENT_5XX_DELAYS) - 1)]
+            delay = _retry_after_seconds(e, delay)
+            time.sleep(delay)
+        except openai.RateLimitError as e:
+            last_err = e
+            if attempt >= max_retries:
+                break
+            delay = _retry_after_seconds(e, JUDGE_RATE_LIMIT_DEFAULT_DELAY)
+            time.sleep(delay)
+        except (openai.InternalServerError, openai.APIConnectionError) as e:
             last_err = e
             if attempt >= max_retries:
                 break
@@ -372,6 +429,27 @@ def _call_with_retry(
             else:
                 # 4xx other than 429 (auth, validation) is non-retriable.
                 raise
+        except genai_errors.APIError as e:
+            code = _gemini_status_code(e)
+            if code == 429:
+                last_err = e
+                if attempt >= max_retries:
+                    break
+                # Gemini puts retry hint in error.details RetryInfo, not headers.
+                # _retry_after_seconds will fall through to default for now;
+                # could be extended to parse RetryInfo if production hits 429s often.
+                delay = _retry_after_seconds(e, JUDGE_RATE_LIMIT_DEFAULT_DELAY)
+                time.sleep(delay)
+            elif code in _TRANSIENT_HTTP_CODES:
+                last_err = e
+                if attempt >= max_retries:
+                    break
+                delay = JUDGE_TRANSIENT_5XX_DELAYS[min(attempt, len(JUDGE_TRANSIENT_5XX_DELAYS) - 1)]
+                time.sleep(delay)
+            else:
+                # 4xx other than 429 (auth, INVALID_ARGUMENT, PERMISSION_DENIED
+                # incl. billing-not-enabled) is non-retriable.
+                raise
     raise last_err  # type: ignore[misc]
 
 
@@ -385,12 +463,101 @@ def _call_mistral(client: Mistral, user_message: str) -> tuple[str, int, int, in
     return _call_with_retry(lambda: _call_mistral_raw(client, user_message), judge="mistral")
 
 
+def _call_gemini_raw(client: genai.Client, user_message: str) -> tuple[str, int, int, int]:
+    """Returns (raw_text, input_tokens, output_tokens, latency_ms).
+
+    Gemini supports response_mime_type='application/json' which forces valid
+    JSON server-side, reducing parse-failure risk vs Opus (markdown fences)
+    and Mistral (occasional prose preamble). System instruction goes via the
+    config rather than as a separate message.
+
+    Thinking is enabled implicitly (Gemini 2.5 Pro REQUIRES thinking — cannot
+    set thinking_budget=0). Thinking tokens are billed at the output rate
+    and consume the max_output_tokens budget alongside visible output, so
+    we use GEMINI_MAX_TOKENS (4096) instead of JUDGE_MAX_TOKENS (1024) and
+    sum thinking + visible into out_tok for cost accounting.
+    """
+    t0 = time.perf_counter()
+    resp = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=user_message,
+        config=genai_types.GenerateContentConfig(
+            system_instruction=_SYSTEM_PROMPT,
+            temperature=JUDGE_TEMPERATURE,
+            max_output_tokens=GEMINI_MAX_TOKENS,
+            response_mime_type="application/json",
+        ),
+    )
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    text = resp.text or ""
+    in_tok = resp.usage_metadata.prompt_token_count
+    visible_out = resp.usage_metadata.candidates_token_count or 0
+    thinking_out = getattr(resp.usage_metadata, "thoughts_token_count", 0) or 0
+    out_tok = visible_out + thinking_out
+    return text, in_tok, out_tok, latency_ms
+
+
+def _call_gemini(client: genai.Client, user_message: str) -> tuple[str, int, int, int]:
+    """Retry-wrapped Gemini call."""
+    return _call_with_retry(lambda: _call_gemini_raw(client, user_message), judge="gemini")
+
+
+def _call_gpt55_raw(client: openai.OpenAI, user_message: str) -> tuple[str, int, int, int]:
+    """Returns (raw_text, input_tokens, output_tokens, latency_ms).
+
+    GPT-5.5 is a reasoning model — reasoning tokens count toward the
+    max_completion_tokens budget (default reasoning_effort='medium'). We use
+    GPT55_MAX_TOKENS=4096 to leave room for both reasoning + the ~300-token
+    JSON response. response_format={"type":"json_object"} forces valid JSON
+    server-side, reducing parse-failure risk.
+
+    completion_tokens reported by the API already INCLUDES reasoning tokens
+    (per OpenAI docs); read it directly for cost accounting (no visible+thinking
+    summing needed, unlike Gemini).
+
+    NOTE on temperature: GPT-5.5 only supports the default temperature=1
+    (verified 2026-05-10 — API returns `400: Unsupported value: 'temperature'
+    does not support 0 with this model. Only the default (1) value is supported.`
+    for any explicit non-1 value). This is stricter than GPT-5.4 family which
+    accepts temp=0 at the default reasoning_effort='medium'. We omit the
+    temperature parameter entirely (default 1 applies). Judge non-determinism
+    at temp=1 is documented in the methodology section and is the same kind of
+    constraint Gemini and Mistral exhibit at any temperature setting.
+    """
+    t0 = time.perf_counter()
+    resp = client.chat.completions.create(
+        model=GPT55_MODEL,
+        max_completion_tokens=GPT55_MAX_TOKENS,
+        # temperature omitted — API-mandated default of 1; see docstring.
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+    )
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+    text = resp.choices[0].message.content or ""
+    in_tok = resp.usage.prompt_tokens
+    out_tok = resp.usage.completion_tokens
+    return text, in_tok, out_tok, latency_ms
+
+
+def _call_gpt55(client: openai.OpenAI, user_message: str) -> tuple[str, int, int, int]:
+    """Retry-wrapped GPT-5.5 call. The retry classifier already covers
+    openai.RateLimitError, openai.InternalServerError, openai.APIConnectionError
+    (added during Day 7 retry hardening for the test-model OpenAI calls;
+    judges share the same exception types via the same SDK)."""
+    return _call_with_retry(lambda: _call_gpt55_raw(client, user_message), judge="gpt55")
+
+
 def call_judge(
     judge_name: JudgeName,
     judge_call: JudgeCall,
     *,
     opus_client: anthropic.Anthropic | None = None,
     mistral_client: Mistral | None = None,
+    gemini_client: "genai.Client | None" = None,
+    gpt55_client: openai.OpenAI | None = None,
 ) -> JudgeResponse:
     """Fire a judge API call. Single retry on parse/range failure (one extra
     API call); a second parse failure returns JudgeResponse with parse_error
@@ -403,6 +570,17 @@ def call_judge(
         if mistral_client is None:
             mistral_client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
         call_fn = lambda: _call_mistral(mistral_client, judge_call.user_message)
+    elif judge_name == "gemini":
+        if gemini_client is None:
+            gemini_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        call_fn = lambda: _call_gemini(gemini_client, judge_call.user_message)
+    elif judge_name == "gpt55":
+        if gpt55_client is None:
+            # max_retries=0 disables the OpenAI SDK's internal retry loop —
+            # we control retry via _call_with_retry, mirroring the test-model
+            # OpenAI adapter pattern in runners/run_openai.py.
+            gpt55_client = openai.OpenAI(max_retries=0)
+        call_fn = lambda: _call_gpt55(gpt55_client, judge_call.user_message)
     else:
         raise ValueError(f"unknown judge {judge_name!r}")
 
@@ -428,8 +606,18 @@ def call_judge(
     )
 
 
+_JUDGE_MODEL_BY_NAME: dict[str, str] = {
+    "opus": OPUS_MODEL,
+    "mistral": MISTRAL_MODEL,
+    "gemini": GEMINI_MODEL,
+    "gpt55": GPT55_MODEL,
+}
+
+
 def _judge_model_id(judge_name: JudgeName) -> str:
-    return OPUS_MODEL if judge_name == "opus" else MISTRAL_MODEL
+    """Map judge slot name to the API model ID. Used for cost lookup in
+    runners/budget.py.estimate_cost_usd."""
+    return _JUDGE_MODEL_BY_NAME[judge_name]
 
 
 def score_one_batch(
@@ -440,6 +628,8 @@ def score_one_batch(
     *,
     opus_client: anthropic.Anthropic | None = None,
     mistral_client: Mistral | None = None,
+    gemini_client: "genai.Client | None" = None,
+    gpt55_client: openai.OpenAI | None = None,
 ) -> tuple[JudgeCall, list[JudgeRowScore]]:
     """Run one (prompt, lever) batch through both judges. Returns the
     JudgeCall (for audit/persistence) plus per-(model, judge) row scores.
@@ -458,6 +648,7 @@ def score_one_batch(
             resp = call_judge(
                 judge_name, call,
                 opus_client=opus_client, mistral_client=mistral_client,
+                gemini_client=gemini_client, gpt55_client=gpt55_client,
             )
         except Exception as e:
             # Retry-exhausted judge call. Emit error rows so the caller can

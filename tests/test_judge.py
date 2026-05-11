@@ -18,6 +18,7 @@ import csv
 import json
 from pathlib import Path
 
+import openai
 import pytest
 
 from scoring.disagreement import (
@@ -331,6 +332,82 @@ def test_canonical_score_still_computed_on_disagreement():
     assert canonical_score(0.9, 0.3) == 0.6
 
 
+# ---------- N-judge disagreement (Day 11 3-judge methodology) ----------
+#
+# Methodology: canonical = median; disagreement fires when ANY judge deviates
+# from median by > 0.2. This generalises the existing 2-judge rule and is
+# special-cased to preserve the historical |a-b| > 0.2 semantic for N=2.
+
+def test_three_judges_consensus_break_example_from_methodology_doc():
+    """Methodology doc § 'Three-judge disagreement methodology' worked example:
+    scores (0.3, 0.5, 0.7) have median 0.5; max deviation = 0.2 (Opus and
+    Gemini both at exactly threshold); NOT > 0.2 → no disagreement flag."""
+    assert is_disagreement(0.3, 0.5, 0.7) is False
+    assert canonical_score(0.3, 0.5, 0.7) == 0.5
+
+
+def test_three_judges_disagreement_outlier():
+    """One judge way off the consensus → disagreement flag fires."""
+    # median = 0.5; deviations 0.3, 0, 0.4 → max 0.4 > 0.2
+    assert is_disagreement(0.2, 0.5, 0.9) is True
+    assert canonical_score(0.2, 0.5, 0.9) == 0.5
+
+
+def test_three_judges_unanimous_no_disagreement():
+    """All three at the same score → no disagreement, canonical is that score."""
+    assert is_disagreement(0.7, 0.7, 0.7) is False
+    assert canonical_score(0.7, 0.7, 0.7) == 0.7
+
+
+def test_three_judges_with_one_None_falls_back_to_two_judge_rule():
+    """One judge errored → fall back to the 2-judge semantic (|a-b| > 0.2),
+    not the 3-judge median-deviation rule."""
+    # 2 valid scores 0.3 and 0.7 → |Δ|=0.4 > 0.2 → disagreement
+    assert is_disagreement(0.3, 0.7, None) is True
+    assert canonical_score(0.3, 0.7, None) == 0.5
+    # 2 valid scores 0.5 and 0.7 → |Δ|=0.2, not > 0.2 → no disagreement
+    assert is_disagreement(0.5, None, 0.7) is False
+    assert canonical_score(0.5, None, 0.7) == 0.6
+
+
+def test_three_judges_all_None_no_disagreement():
+    """All judges errored → no disagreement (no data), canonical is None."""
+    assert is_disagreement(None, None, None) is False
+    assert canonical_score(None, None, None) is None
+
+
+def test_three_judges_one_score_no_disagreement():
+    """Only one judge produced a score → no disagreement (need 2 to compare),
+    canonical is that single score."""
+    assert is_disagreement(0.6, None, None) is False
+    assert canonical_score(0.6, None, None) == 0.6
+
+
+def test_three_judges_at_exact_threshold_does_not_fire():
+    """Boundary: median ± exactly 0.2 → not > 0.2 → no disagreement.
+    Mirrors the 2-judge boundary behavior (PRD § 7: |Δ| ≤ 0.2 agrees)."""
+    # median = 0.5; deviation = 0.2 exactly → no disagreement
+    assert is_disagreement(0.3, 0.5, 0.7) is False
+    # nudge above threshold → disagreement fires
+    assert is_disagreement(0.29, 0.5, 0.7) is True
+
+
+def test_two_judge_semantic_unchanged_after_n_judge_refactor():
+    """Regression: existing 2-judge call sites must produce identical results
+    to pre-refactor. The refactor introduced *args API but the 2-judge
+    semantic (|a-b| > 0.2) is preserved verbatim."""
+    # Equivalent to pre-refactor is_disagreement(0.7, 0.5)
+    assert is_disagreement(0.7, 0.5) is False  # |Δ|=0.2, not > 0.2
+    assert is_disagreement(0.71, 0.5) is True  # |Δ|=0.21 > 0.2
+    assert is_disagreement(1.0, 0.0) is True
+    # Empty / all-None
+    assert is_disagreement() is False
+    assert is_disagreement(None) is False
+    assert is_disagreement(None, None) is False
+    # Single score
+    assert is_disagreement(0.5) is False
+
+
 # ---------- disagreement CSV emission ----------
 
 def test_emit_disagreement_csv_writes_only_disagreed_rows(tmp_path):
@@ -478,6 +555,185 @@ def test_judge_does_not_retry_on_non_retriable_4xx(monkeypatch):
     assert sleeps == []
 
 
+# ---------- Gemini retry (Day 11 3-judge integration) ----------
+
+def _fake_gemini_error(status_code: int):
+    """Construct a google.genai.errors.ClientError or ServerError matching the
+    real SDK shape — for Layer 1 retry tests without firing API calls.
+    Mirrors _fake_mistral_sdk_error from Day 10."""
+    import httpx
+    from google.genai import errors as genai_errors
+    body = {"error": {"code": status_code, "message": "fake error",
+                      "status": "RESOURCE_EXHAUSTED" if status_code == 429 else "ERROR"}}
+    req = httpx.Request("POST",
+                        "https://generativelanguage.googleapis.com/v1beta/"
+                        "models/gemini-3.1-pro-preview:generateContent")
+    resp = httpx.Response(status_code, content=str(body).encode(), request=req)
+    if 400 <= status_code < 500:
+        return genai_errors.ClientError(status_code, body, resp)
+    return genai_errors.ServerError(status_code, body, resp)
+
+
+def test_judge_retries_on_gemini_429_then_succeeds(monkeypatch):
+    """Gemini 429 (RESOURCE_EXHAUSTED) → wait → retry → success."""
+    from scoring import judge
+    sleeps: list[float] = []
+    monkeypatch.setattr(judge.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _fake_gemini_error(429)
+        return ("ok", 1, 1, 1)
+    text, *_ = judge._call_with_retry(raw, judge="gemini")
+    assert calls["n"] == 2
+    assert text == "ok"
+    assert sleeps == [judge.JUDGE_RATE_LIMIT_DEFAULT_DELAY]
+
+
+def test_judge_retries_on_gemini_503_then_succeeds(monkeypatch):
+    """Gemini 503 (UNAVAILABLE) → wait with exponential backoff → retry → success."""
+    from scoring import judge
+    sleeps: list[float] = []
+    monkeypatch.setattr(judge.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise _fake_gemini_error(503)
+        return ("ok", 1, 1, 1)
+    text, *_ = judge._call_with_retry(raw, judge="gemini")
+    assert calls["n"] == 3
+    assert sleeps == [judge.JUDGE_TRANSIENT_5XX_DELAYS[0],
+                      judge.JUDGE_TRANSIENT_5XX_DELAYS[1]]
+
+
+def test_judge_does_not_retry_on_gemini_400(monkeypatch):
+    """Gemini 400 (INVALID_ARGUMENT, e.g. malformed config) is non-retriable —
+    re-firing won't fix it, just wastes API budget."""
+    from scoring import judge
+    sleeps: list[float] = []
+    monkeypatch.setattr(judge.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        raise _fake_gemini_error(400)
+    with pytest.raises(Exception):
+        judge._call_with_retry(raw, judge="gemini")
+    assert calls["n"] == 1
+    assert sleeps == []
+
+
+def test_judge_does_not_retry_on_gemini_403(monkeypatch):
+    """Gemini 403 (PERMISSION_DENIED, e.g. billing not enabled) is non-retriable.
+    Specifically guards against the smoke-test failure mode observed Day 11
+    pre-billing where free-tier quota was 0 — retrying would just hit the same
+    wall and burn time."""
+    from scoring import judge
+    sleeps: list[float] = []
+    monkeypatch.setattr(judge.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        raise _fake_gemini_error(403)
+    with pytest.raises(Exception):
+        judge._call_with_retry(raw, judge="gemini")
+    assert calls["n"] == 1
+    assert sleeps == []
+
+
+# ---------- OpenAI judge (GPT-5.5) retry tests ----------
+#
+# The retry classifier already catches openai.RateLimitError,
+# openai.InternalServerError, and openai.APIConnectionError (Day 7 hardening
+# for test-model OpenAI calls). The judge calls share the same SDK and
+# exception types — these tests confirm the existing retry path applies
+# correctly to the new judge dispatch.
+
+def _fake_openai_rate_limit(retry_after: float | None = None):
+    """Construct an openai.RateLimitError matching the real SDK shape."""
+    import httpx
+    body = {"error": {"message": "rate limit", "type": "rate_limit_error"}}
+    headers = {"retry-after": str(retry_after)} if retry_after is not None else {}
+    req = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    resp = httpx.Response(429, headers=headers, content=str(body).encode(), request=req)
+    return openai.RateLimitError("rate limited", response=resp, body=body)
+
+
+def _fake_openai_5xx(status_code: int):
+    """Construct an openai.InternalServerError for transient 5xx retry tests."""
+    import httpx
+    body = {"error": {"message": "server error", "type": "server_error"}}
+    req = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+    resp = httpx.Response(status_code, content=str(body).encode(), request=req)
+    return openai.InternalServerError("server error", response=resp, body=body)
+
+
+def test_judge_retries_on_openai_429_then_succeeds(monkeypatch):
+    """OpenAI 429 → wait → retry → success. Same retry path as test-model
+    OpenAI calls; judge dispatch reuses it transparently."""
+    from scoring import judge
+    sleeps: list[float] = []
+    monkeypatch.setattr(judge.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _fake_openai_rate_limit()
+        return ("ok", 1, 1, 1)
+    text, *_ = judge._call_with_retry(raw, judge="gpt55")
+    assert calls["n"] == 2
+    assert text == "ok"
+    assert sleeps == [judge.JUDGE_RATE_LIMIT_DEFAULT_DELAY]
+
+
+def test_judge_retries_on_openai_500_then_succeeds(monkeypatch):
+    """OpenAI 500 (InternalServerError) → wait with exponential backoff → retry → success."""
+    from scoring import judge
+    sleeps: list[float] = []
+    monkeypatch.setattr(judge.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise _fake_openai_5xx(500)
+        return ("ok", 1, 1, 1)
+    text, *_ = judge._call_with_retry(raw, judge="gpt55")
+    assert calls["n"] == 3
+    assert sleeps == [judge.JUDGE_TRANSIENT_5XX_DELAYS[0],
+                      judge.JUDGE_TRANSIENT_5XX_DELAYS[1]]
+
+
+def test_judge_retries_on_openai_apiconnection_error(monkeypatch):
+    """openai.APIConnectionError (transient network) is in the retry classifier
+    and treated as a 5xx — exponential backoff."""
+    from scoring import judge
+    sleeps: list[float] = []
+    monkeypatch.setattr(judge.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise openai.APIConnectionError(request=None)
+        return ("ok", 1, 1, 1)
+    text, *_ = judge._call_with_retry(raw, judge="gpt55")
+    assert calls["n"] == 2
+    assert text == "ok"
+
+
+def test_judge_retry_exhaustion_raises_for_openai(monkeypatch):
+    """Persistent 429s exhaust the retry budget and re-raise."""
+    from scoring import judge
+    monkeypatch.setattr(judge.time, "sleep", lambda s: None)
+    calls = {"n": 0}
+    def raw():
+        calls["n"] += 1
+        raise _fake_openai_rate_limit()
+    with pytest.raises(openai.RateLimitError):
+        judge._call_with_retry(raw, judge="gpt55", max_retries=2)
+    assert calls["n"] == 3, f"expected 1 + max_retries=2 attempts; got {calls['n']}"
+
+
 # ---------- partial-result handling in score_one_batch (Day 10 recovery) ----------
 #
 # Pre-recovery: when one judge raised, the OTHER judge's successful work was
@@ -530,6 +786,69 @@ def test_score_one_batch_returns_partial_on_one_judge_failure(monkeypatch):
 
     # Per-row Opus cost must be > 0 (the work was paid for and is not discarded)
     assert sum(r.cost_usd for r in opus_rows) > 0
+
+
+def test_score_one_batch_populates_reasoning_when_judge_returns_it(monkeypatch):
+    """Day 11 invariant: JudgeRowScore.reasoning carries the judge's per-response
+    one-sentence reasoning. The Day 10 day_10.py persistence step relies on
+    this — it writes JudgeRowScore.reasoning into judge_a_reasoning / judge_b_reasoning.
+    Lock in the contract so a future judge.py refactor can't silently drop reasoning
+    without breaking this test."""
+    from scoring import judge as judge_mod
+
+    prompt = make_prompt(
+        prompt_id="rea-001", task_category="reasoning",
+        expected={"final_answer": "£14.00"},
+        judge_criteria="Reasoning must compute daily rate then multiply.",
+    )
+    responses = {m: f"stub {i}" for i, m in enumerate(TEST_MODELS_4)}
+
+    fake_resp = judge_mod.JudgeResponse(
+        judge="opus",
+        raw_text="{}",
+        scores={"A": 0.9, "B": 0.5, "C": 0.7, "D": 0.2},
+        reasoning={"A": "fully correct", "B": "missed substep b",
+                   "C": "ok with caveat", "D": "wrong final"},
+        input_tokens=100, output_tokens=80, latency_ms=2000,
+        parse_error=None,
+    )
+    monkeypatch.setattr(judge_mod, "call_judge", lambda *a, **kw: fake_resp)
+
+    call, rows = judge_mod.score_one_batch(prompt, responses, lever="baseline",
+                                           judge_names=("opus",))
+    rows_by_label = {r.position_label: r for r in rows}
+    for label, expected in [("A", "fully correct"), ("B", "missed substep b"),
+                            ("C", "ok with caveat"), ("D", "wrong final")]:
+        assert rows_by_label[label].reasoning == expected
+
+
+def test_score_one_batch_reasoning_is_none_when_judge_omits_it(monkeypatch):
+    """If the judge response has no reasoning block, JudgeRowScore.reasoning must
+    be None (not an empty string, not KeyError) — persistence layer relies on
+    None to skip writing the column under COALESCE semantics."""
+    from scoring import judge as judge_mod
+
+    prompt = make_prompt(
+        prompt_id="cs-001", task_category="customer_support",
+        expected={"category": "billing"},
+        judge_criteria="x",
+    )
+    responses = {m: f"stub {i}" for i, m in enumerate(TEST_MODELS_4)}
+
+    fake_resp = judge_mod.JudgeResponse(
+        judge="mistral",
+        raw_text='{"A":0.5,"B":0.5,"C":0.5,"D":0.5}',
+        scores={"A": 0.5, "B": 0.5, "C": 0.5, "D": 0.5},
+        reasoning={},  # judge returned no reasoning block
+        input_tokens=100, output_tokens=20, latency_ms=1000,
+        parse_error=None,
+    )
+    monkeypatch.setattr(judge_mod, "call_judge", lambda *a, **kw: fake_resp)
+
+    _, rows = judge_mod.score_one_batch(prompt, responses, lever="baseline",
+                                        judge_names=("mistral",))
+    for r in rows:
+        assert r.reasoning is None
 
 
 def test_score_one_batch_with_judge_subset_skips_unrequested_judges(monkeypatch):

@@ -1017,3 +1017,133 @@ def test_sync_call_retry_exhaustion_raises(monkeypatch):
 
     assert mock_client.chat.completions.create.call_count == 4
     assert sleep_calls == [120.0, 120.0, 120.0]   # DEFAULT_TRANSIENT_5XX_DELAY × 3
+
+
+# ---------------------------------------------------------------------------
+# Test 18: SQL UPDATE parameter-order regression (Day 11 backfill bug)
+# ---------------------------------------------------------------------------
+#
+# METHODOLOGY LESSON: The Day 11 Opus reasoning backfill had a parameter-order
+# bug — the SQL placeholders were `WHERE run_id=? AND prompt_id=? AND model=?
+# AND lever=?` but the parameters were bound `(run_id, model, prompt_id, lever)`,
+# swapping prompt_id and model. The UPDATE matched 0 rows in every batch but
+# the script's "n_skipped_existing" counter conflated "row not found" with
+# "row had existing data, preserved". The bug was invisible until £0.78 of
+# Opus calls had been spent writing nothing.
+#
+# This regression test exercises the post-fix helper update_judge_a_reasoning_
+# if_null against a fixture DB. If a future refactor swaps any parameter, the
+# rowcount assertion fails immediately with no API spend.
+#
+# General principle the test enforces: when the SQL has positional parameters
+# AND the function takes positional arguments, EITHER (a) factor a keyword-
+# only helper so the binding is explicit and tested, or (b) accept the
+# tautology and write a test that catches the swap.
+
+def test_update_judge_a_reasoning_if_null_param_order_regression(fresh_db):
+    """The Day 11 backfill bug: WHERE clause params got bound in the wrong
+    order, UPDATE matched 0 rows, £0.78 of Opus reasoning was lost. The
+    keyword-only helper makes the binding explicit; this test confirms the
+    helper actually finds the right row when called with each argument
+    correctly named."""
+    import sqlite3
+    from scripts.day_11_opus_reasoning_backfill import update_judge_a_reasoning_if_null
+
+    # Insert a row that the script's WHERE clause should match
+    rid = start_run(cost_cap_gbp=300.0, db_path=fresh_db)
+    prompt = make_prompt("rea-007", task_category="reasoning")
+    adapter = _FakeAdapter(input_tokens=100, output_tokens=50)
+    run_one(
+        adapter, prompt, "claude-sonnet-4-6", lever="batch",
+        run_id=rid, cap_gbp=300.0, completed=0, planned=1, db_path=fresh_db,
+    )
+    # Confirm baseline: row exists with judge_a_reasoning = NULL
+    with sqlite3.connect(fresh_db) as conn:
+        existing = conn.execute(
+            "SELECT judge_a_reasoning FROM results "
+            "WHERE run_id=? AND prompt_id='rea-007' AND model='claude-sonnet-4-6' "
+            "AND optimisation_lever='batch'", (rid,)
+        ).fetchone()
+        assert existing == (None,), "fixture row should have judge_a_reasoning NULL"
+
+        # The CORRECT call: arguments line up with WHERE-clause placeholders
+        rowcount = update_judge_a_reasoning_if_null(
+            conn,
+            run_id=rid,
+            prompt_id="rea-007",          # ← if we swap with model below, the
+            model="claude-sonnet-4-6",    # ← bug returns; this test catches it
+            lever="batch",
+            reasoning="Opus's per-response reasoning text",
+            ts="2026-05-11T00:00:00+00:00",
+        )
+        assert rowcount == 1, (
+            f"helper should have matched and updated 1 row; got {rowcount}. "
+            f"If 0, the WHERE-clause parameter binding is wrong (Day 11 bug)."
+        )
+        conn.commit()
+
+        # Verify the write landed
+        after = conn.execute(
+            "SELECT judge_a_reasoning FROM results "
+            "WHERE run_id=? AND prompt_id='rea-007' AND model='claude-sonnet-4-6' "
+            "AND optimisation_lever='batch'", (rid,)
+        ).fetchone()
+        assert after == ("Opus's per-response reasoning text",)
+
+
+def test_update_judge_a_reasoning_if_null_preserves_existing_reasoning(fresh_db):
+    """Strict NULL guard: helper must NOT overwrite existing reasoning. This
+    matches the methodology semantic — Day 11 reasoning re-fire data is
+    preserved, only NULL slots get backfilled."""
+    import sqlite3
+    from scripts.day_11_opus_reasoning_backfill import update_judge_a_reasoning_if_null
+
+    rid = start_run(cost_cap_gbp=300.0, db_path=fresh_db)
+    prompt = make_prompt("rea-008", task_category="reasoning")
+    adapter = _FakeAdapter()
+    run_one(
+        adapter, prompt, "claude-sonnet-4-6", lever="baseline",
+        run_id=rid, cap_gbp=300.0, completed=0, planned=1, db_path=fresh_db,
+    )
+    # Pre-populate judge_a_reasoning with a known value
+    with sqlite3.connect(fresh_db) as conn:
+        conn.execute(
+            "UPDATE results SET judge_a_reasoning='ORIGINAL Opus reasoning' "
+            "WHERE run_id=? AND prompt_id='rea-008'", (rid,)
+        )
+        conn.commit()
+
+        rowcount = update_judge_a_reasoning_if_null(
+            conn,
+            run_id=rid, prompt_id="rea-008", model="claude-sonnet-4-6",
+            lever="baseline",
+            reasoning="NEW Opus reasoning that should NOT overwrite",
+            ts="2026-05-11T00:00:00+00:00",
+        )
+        assert rowcount == 0, "must not overwrite existing reasoning"
+
+        after = conn.execute(
+            "SELECT judge_a_reasoning FROM results WHERE run_id=?", (rid,)
+        ).fetchone()
+        assert after == ("ORIGINAL Opus reasoning",)
+
+
+def test_update_judge_a_reasoning_if_null_returns_zero_on_unknown_row(fresh_db):
+    """If the row doesn't exist, rowcount must be 0 (not raise). Distinct
+    from 'row exists but reasoning preserved' — both return 0, so the
+    caller must not interpret rowcount=0 as 'reasoning preserved' (the
+    Day 11 bug interpreted it that way and missed a real WHERE mismatch)."""
+    import sqlite3
+    from scripts.day_11_opus_reasoning_backfill import update_judge_a_reasoning_if_null
+
+    with sqlite3.connect(fresh_db) as conn:
+        rowcount = update_judge_a_reasoning_if_null(
+            conn,
+            run_id="nonexistent-run",
+            prompt_id="nope-001",
+            model="not-a-model",
+            lever="baseline",
+            reasoning="x",
+            ts="2026-05-11T00:00:00+00:00",
+        )
+        assert rowcount == 0

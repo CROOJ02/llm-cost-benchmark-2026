@@ -85,6 +85,28 @@ def _parse_args() -> argparse.Namespace:
                         "score_one_batch dispatches both judges; the partial-results refactor "
                         "in scoring/judge.py persists each judge's success independently, so "
                         "re-running across already-scored sides is harmless (skip-if-already-set).")
+    p.add_argument("--reasoning-only", action="store_true",
+                   help="Re-fire ONLY the (prompt, lever) batches involved in existing judge "
+                        "disagreements (judge_disagreement_flag=1) to populate the "
+                        "judge_a_reasoning + judge_b_reasoning columns. Does NOT overwrite "
+                        "existing scores or disagreement flags — those are preserved from "
+                        "Day 10 (immutable post-scoring) to avoid disagreement-flag flapping "
+                        "from fractional score drift at temperature=0. Reasoning is the only "
+                        "new data written. See methodology doc § 'Day 11 reasoning re-fire'.")
+    p.add_argument("--realign-scores", action="store_true",
+                   help="Re-fire the (prompt, lever) batches involved in existing judge "
+                        "disagreements AND OVERWRITE both score and reasoning with the new "
+                        "API call's output, then recompute the disagreement flag. Use to "
+                        "repair score-reasoning desyncs from a prior --reasoning-only pass "
+                        "where temperature=0 didn't yield reproducible scores. The "
+                        "arbitration target set is re-derived from the new aligned scores.")
+    p.add_argument("--judges-only", default=None, metavar="NAMES",
+                   help="Comma-separated list of judges to fire (e.g. 'gpt55' or 'gpt55,gemini'). "
+                        "Other judges are skipped. Persistence updates ONLY the columns for the "
+                        "fired judges (judge_b_* for gpt55, judge_c_* for gemini); judge_a_* "
+                        "(Opus) is preserved from earlier sweeps. judge_disagreement_flag is "
+                        "recomputed from (DB judge_a_score, fresh judge_b_score). Use for the "
+                        "Day 11 panel-revision GPT-5.5-only sweep that keeps Opus stable.")
     p.add_argument("--concurrency", type=int, default=4,
                    help="Number of batches in flight. Default 4. Day 10 recovery uses 2 "
                         "to stay under Mistral's TPM ceiling.")
@@ -117,6 +139,22 @@ def _result_id_lookup(conn: sqlite3.Connection, run_id: str) -> dict[tuple[str, 
     ):
         out[(pid, model, lever)] = rid
     return out
+
+
+def _reasoning_only_targets(
+    conn: sqlite3.Connection, run_id: str, all_targets: list[tuple[str, str]],
+) -> list[tuple[str, str]]:
+    """(prompt_id, lever) batches that have ANY model row flagged
+    judge_disagreement_flag=1 under run_id. Re-firing the whole batch is
+    necessary because score_one_batch always scores all 4 model responses
+    together — there's no per-row judge call to selectively re-fire."""
+    rows = conn.execute(
+        "SELECT DISTINCT prompt_id, optimisation_lever FROM results "
+        "WHERE run_id = ? AND judge_disagreement_flag = 1",
+        (run_id,),
+    ).fetchall()
+    flagged = set(rows)
+    return [(pid, lever) for pid, lever in all_targets if (pid, lever) in flagged]
 
 
 def _missing_only_targets(
@@ -173,14 +211,45 @@ def main() -> None:
     if args.limit:
         targets = targets[: args.limit]
 
+    exclusive_flags = sum([args.missing_only, args.reasoning_only, args.realign_scores, bool(args.judges_only)])
+    if exclusive_flags > 1:
+        sys.exit("ERROR: --missing-only / --reasoning-only / --realign-scores / --judges-only are mutually exclusive.")
+
+    judges_only_set: set[str] | None = None
+    if args.judges_only:
+        judges_only_set = {j.strip() for j in args.judges_only.split(",") if j.strip()}
+        unknown = judges_only_set - {"opus", "mistral", "gpt55", "gemini"}
+        if unknown:
+            sys.exit(f"ERROR: --judges-only contains unknown judges: {unknown}")
+        # GPT-5.5-only sweep persists to judge_b_*; Gemini-only would persist
+        # to judge_c_*. Mixed sweeps not supported by the persistence path.
+        unsupported_combos = (
+            ("opus" in judges_only_set and len(judges_only_set) > 1),
+        )
+        if any(unsupported_combos):
+            sys.exit(f"ERROR: --judges-only with 'opus' is not supported; Opus stays "
+                     f"in judge_a_* via existing data, this flag re-fires Opus which "
+                     f"would overwrite known-good Day 10 scores.")
+
     skip_judge_per_batch: dict[tuple[str, str], tuple[bool, bool]] = {}
     if args.missing_only:
         with sqlite3.connect(DB_PATH) as conn:
             targets, skip_judge_per_batch = _missing_only_targets(conn, run_id, targets)
+    elif args.reasoning_only or args.realign_scores:
+        # Both modes target the same set: batches with judge_disagreement_flag=1.
+        # The persistence behavior differs (narrow vs full overwrite).
+        with sqlite3.connect(DB_PATH) as conn:
+            targets = _reasoning_only_targets(conn, run_id, targets)
 
+    mode_label = "WRITE" if args.write else "DRY"
+    if args.missing_only:
+        mode_label += "  [MISSING-ONLY recovery]"
+    elif args.reasoning_only:
+        mode_label += "  [REASONING-ONLY re-fire]"
+    elif args.realign_scores:
+        mode_label += "  [REALIGN-SCORES re-fire — overwrites scores+reasoning+flag]"
     _print_section(f"Day 10 dual-judge sweep — run {run_id}")
-    print(f"mode:           {'WRITE' if args.write else 'DRY'}"
-          f"{'  [MISSING-ONLY recovery]' if args.missing_only else ''}", flush=True)
+    print(f"mode:           {mode_label}", flush=True)
     print(f"batches:        {len(targets)}  ((prompt, lever) tuples)", flush=True)
     print(f"judge calls:    {len(targets) * 2}  (some sides may skip per skip_map)", flush=True)
     print(f"row scores:     {len(targets) * 4 * 2}", flush=True)
@@ -188,8 +257,18 @@ def main() -> None:
     print(f"position log:   {JUDGE_POS_LOG}", flush=True)
     print(f"disagreements:  {DISAGREEMENTS_CSV}", flush=True)
 
-    opus_client = anthropic.Anthropic()
-    mistral_client = Mistral(api_key=os.environ["MISTRAL_API_KEY"])
+    # Lazy-init: only create clients for judges that will actually fire.
+    # GPT-5.5 + Gemini added Day 11 for the panel-revision sweep.
+    opus_client = anthropic.Anthropic() if (judges_only_set is None or "opus" in judges_only_set) else None
+    mistral_client = Mistral(api_key=os.environ["MISTRAL_API_KEY"]) if (judges_only_set is None or "mistral" in judges_only_set) else None
+    gpt55_client = None
+    gemini_client = None
+    if judges_only_set and "gpt55" in judges_only_set:
+        import openai as _openai
+        gpt55_client = _openai.OpenAI(max_retries=0)
+    if judges_only_set and "gemini" in judges_only_set:
+        from google import genai as _genai
+        gemini_client = _genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -218,20 +297,29 @@ def main() -> None:
         return
 
     rows_collected: list[dict] = []
-    cost_by_judge: dict[str, float] = {"opus": 0.0, "mistral": 0.0}
-    latency_by_judge: dict[str, list[int]] = {"opus": [], "mistral": []}
+    # defaultdicts so any judge name (opus/mistral/gpt55/gemini) can be added
+    # without pre-declaration. Day 11 panel revision added gpt55 and gemini;
+    # original hardcoded {"opus", "mistral"} keys would KeyError on first batch.
+    cost_by_judge: dict[str, float] = defaultdict(float)
+    latency_by_judge: dict[str, list[int]] = defaultdict(list)
     parse_errors_by_judge: Counter[str] = Counter()
     position_log: list[dict] = []
 
     def _fire_one(pid: str, lever: str) -> tuple[str, str, dict, list]:
         prompt = prompts_by_id[pid]
         responses = batch_responses[(pid, lever)]
-        skip_opus, skip_mistral = skip_judge_per_batch.get((pid, lever), (False, False))
-        judges = tuple(j for j, skip in (("opus", skip_opus), ("mistral", skip_mistral)) if not skip)
+        if judges_only_set is not None:
+            # Judge-subset sweep — fire only the judges in the set, exactly as
+            # specified. Skip-map from --missing-only doesn't apply here.
+            judges = tuple(sorted(judges_only_set))
+        else:
+            skip_opus, skip_mistral = skip_judge_per_batch.get((pid, lever), (False, False))
+            judges = tuple(j for j, skip in (("opus", skip_opus), ("mistral", skip_mistral)) if not skip)
         call, scored = score_one_batch(
             prompt, responses, lever,
             judge_names=judges,
             opus_client=opus_client, mistral_client=mistral_client,
+            gpt55_client=gpt55_client, gemini_client=gemini_client,
         )
         return pid, lever, {
             "prompt_id": pid, "lever": lever, "seed": call.seed,
@@ -274,39 +362,89 @@ def main() -> None:
     wall = time.perf_counter() - t0
 
     _print_section("Sweep complete — aggregating")
-    # Pair (judge_a=opus, judge_b=mistral) scores per (prompt, model, lever)
+    # Pair (judge_a=opus, judge_b=<active judge B>) scores per (prompt, model, lever).
+    # Reasoning is carried in a parallel dict so JudgePair (used downstream
+    # for disagreement detection) stays score-only — Day 11 added reasoning
+    # capture without changing the disagreement contract. The "judge B" slot
+    # is GPT-5.5 post-Day-11 panel revision; legacy "mistral" preserved for
+    # any backward-compat sweeps.
     by_row: dict[tuple[str, str, str], dict[str, float | None]] = defaultdict(
-        lambda: {"opus": None, "mistral": None}
+        lambda: {"opus": None, "mistral": None, "gpt55": None, "gemini": None}
+    )
+    by_row_reasoning: dict[tuple[str, str, str], dict[str, str | None]] = defaultdict(
+        lambda: {"opus": None, "mistral": None, "gpt55": None, "gemini": None}
     )
     by_row_meta: dict[tuple[str, str, str], dict] = {}
     for r in rows_collected:
         key = (r["prompt_id"], r["model"], r["lever"])
         by_row[key][r["judge"]] = r["score"]
+        by_row_reasoning[key][r["judge"]] = r["reasoning"]
         by_row_meta.setdefault(key, {"position": r["position"], "judge_errors": []})
         if r["judge_error"]:
             by_row_meta[key]["judge_errors"].append((r["judge"], r["judge_error"]))
 
+    # Determine which judge name maps to "judge B" slot for this sweep.
+    # Default mistral preserves legacy 2-judge behavior. Day 11 panel revision
+    # uses gpt55. Gemini support reserved for v2.
+    if judges_only_set and "gpt55" in judges_only_set:
+        slot_b_judge = "gpt55"
+    elif judges_only_set and "gemini" in judges_only_set:
+        slot_b_judge = "gemini"
+    else:
+        slot_b_judge = "mistral"
+
+    # When --judges-only is set, judge_a (Opus) is preserved from the DB
+    # rather than re-fired. Pre-fetch existing Opus scores so pairs (used by
+    # disagreement detection, calibration metric, and CSV emission) reflect
+    # the stable DB-archived Opus + the fresh Judge B from this sweep.
+    db_opus_scores: dict[tuple[str, str, str], float | None] = {}
+    db_opus_reasoning: dict[tuple[str, str, str], str | None] = {}
+    if judges_only_set is not None:
+        with sqlite3.connect(DB_PATH) as _conn:
+            for key in by_row.keys():
+                pid, model, lev = key
+                row = _conn.execute(
+                    "SELECT judge_a_score, judge_a_reasoning FROM results "
+                    "WHERE run_id=? AND prompt_id=? AND model=? AND optimisation_lever=?",
+                    (run_id, pid, model, lev),
+                ).fetchone()
+                db_opus_scores[key] = row[0] if row else None
+                db_opus_reasoning[key] = row[1] if row else None
+
     pairs: list[JudgePair] = []
+    pair_reasoning: dict[tuple[str, str, str], tuple[str | None, str | None]] = {}
     for (pid, model, lever), scores in by_row.items():
         prompt = prompts_by_id[pid]
         responses = batch_responses.get((pid, lever), {})
+        # judge_a_score: prefer fresh Opus from this run if Opus fired; else
+        # use DB Opus (--judges-only path). For default 2-judge sweeps, Opus
+        # fires fresh and scores["opus"] is the new score.
+        if judges_only_set is not None:
+            ja = db_opus_scores.get((pid, model, lever))
+            ja_rsn = db_opus_reasoning.get((pid, model, lever))
+        else:
+            ja = scores["opus"]
+            ja_rsn = by_row_reasoning[(pid, model, lever)]["opus"]
+        jb = scores[slot_b_judge]
+        jb_rsn = by_row_reasoning[(pid, model, lever)][slot_b_judge]
         pairs.append(JudgePair(
             prompt_id=pid, model=model, lever=lever,
-            judge_a_score=scores["opus"], judge_b_score=scores["mistral"],
+            judge_a_score=ja, judge_b_score=jb,
             response_text=responses.get(model, ""),
             tier_2_criteria=prompt.scoring.tier_2_judge.criteria,
         ))
+        pair_reasoning[(pid, model, lever)] = (ja_rsn, jb_rsn)
 
     n_disagree = sum(1 for p in pairs if is_disagreement(p.judge_a_score, p.judge_b_score))
 
-    # Cross-judge calibration metric: Opus vs Mistral mean per provider family
+    # Cross-judge calibration metric: Opus vs <slot B judge> mean per provider family
     family_scores: dict[tuple[str, str], list[float]] = defaultdict(list)
     for p in pairs:
         family = PROVIDER_FAMILY.get(p.model, "Other")
         if p.judge_a_score is not None:
             family_scores[(family, "opus")].append(p.judge_a_score)
         if p.judge_b_score is not None:
-            family_scores[(family, "mistral")].append(p.judge_b_score)
+            family_scores[(family, slot_b_judge)].append(p.judge_b_score)
 
     # Position-by-model audit (model × slot)
     slot_counts: dict[str, Counter[str]] = {m: Counter() for m in TEST_MODELS}
@@ -322,7 +460,9 @@ def main() -> None:
         slot_score_sum[(r["model"], r["position"])].append(r["score"])
 
     _print_section("Per-judge summary")
-    for j in ("opus", "mistral"):
+    # Iterate over judges that actually fired (any of opus/mistral/gpt55/gemini)
+    # rather than the hardcoded legacy 2-judge set.
+    for j in sorted(latency_by_judge.keys()):
         lats = latency_by_judge[j]
         n_called = len(lats)
         n_err = parse_errors_by_judge[j]
@@ -368,11 +508,11 @@ def main() -> None:
         mean = sum(vs) / len(vs)
         family_means[(fam, judge)] = mean
         print(f"  {fam:12s}  {judge:8s}  {mean:6.3f}  {len(vs):>5}", flush=True)
-    print(f"\n  {'family':12s}  {'opus mean':>10}  {'mistral mean':>13}  {'Δ (residual self-bias)':>25}",
+    print(f"\n  {'family':12s}  {'opus mean':>10}  {slot_b_judge + ' mean':>13}  {'Δ (residual self-bias)':>25}",
           flush=True)
     for fam in ("Anthropic", "OpenAI"):
         o = family_means.get((fam, "opus"))
-        m = family_means.get((fam, "mistral"))
+        m = family_means.get((fam, slot_b_judge))
         if o is not None and m is not None:
             d = o - m
             flag = "  ⚠ |Δ|>0.05" if abs(d) > 0.05 else "  ✓"
@@ -423,16 +563,70 @@ def main() -> None:
                 rid = result_id_by_key.get((p.prompt_id, p.model, p.lever))
                 if rid is None:
                     continue
-                # Fetch existing scores so we don't overwrite previously-filled
-                # sides with NULL on --missing-only re-runs. The combined state
-                # (existing OR new) is what determines disagreement.
+                new_rsn_a, new_rsn_b = pair_reasoning.get(
+                    (p.prompt_id, p.model, p.lever), (None, None)
+                )
+                if args.reasoning_only:
+                    # Narrow update: ONLY reasoning columns. Original scores +
+                    # disagreement flag are preserved as immutable post-Day-10
+                    # state. COALESCE preserves any reasoning that's already
+                    # been written (idempotent re-run safety).
+                    conn.execute(
+                        """UPDATE results
+                              SET judge_a_reasoning = COALESCE(?, judge_a_reasoning),
+                                  judge_b_reasoning = COALESCE(?, judge_b_reasoning),
+                                  score_recomputed_at = ?
+                            WHERE result_id = ?""",
+                        (new_rsn_a, new_rsn_b, ts, rid),
+                    )
+                    n_updated += 1
+                    continue
+
+                if judges_only_set is not None:
+                    # Judge-subset sweep (Day 11 panel revision GPT-5.5 path).
+                    # Update ONLY the columns for the fired judge:
+                    #   - judge_b_score  ← fresh fired judge's score (was NULL)
+                    #   - judge_b_reasoning ← fresh fired judge's reasoning
+                    #   - judge_disagreement_flag ← recomputed from
+                    #     (DB judge_a_score, fresh judge_b_score)
+                    #   - score_recomputed_at ← now
+                    # Explicitly NOT touched:
+                    #   - judge_a_score, judge_a_reasoning (Opus, frozen Day 10)
+                    #   - judge_b_mistral_score, judge_b_mistral_reasoning (archive)
+                    #   - judge_c_score, judge_c_reasoning, judge_c_name (Gemini, NULL)
+                    # p.judge_a_score is the DB-archived Opus (loaded above into
+                    # pairs); p.judge_b_score is the fresh Judge-B call. Both
+                    # are passed to is_disagreement to compute the new flag.
+                    db_opus_for_row = p.judge_a_score
+                    fresh_b_score = p.judge_b_score
+                    disagree = 1 if is_disagreement(db_opus_for_row, fresh_b_score) else 0
+                    if fresh_b_score is None:
+                        n_judge_err_rows += 1
+                    conn.execute(
+                        """UPDATE results
+                              SET judge_b_score = ?,
+                                  judge_b_reasoning = ?,
+                                  judge_disagreement_flag = ?,
+                                  score_recomputed_at = ?
+                            WHERE result_id = ?""",
+                        (fresh_b_score, new_rsn_b, disagree, ts, rid),
+                    )
+                    n_updated += 1
+                    continue
+
+                # Default + --missing-only path: write scores AND reasoning.
+                # Fetch existing values so a NULL on either side doesn't
+                # clobber previously-persisted data.
                 existing = conn.execute(
-                    "SELECT judge_a_score, judge_b_score FROM results WHERE result_id = ?",
+                    "SELECT judge_a_score, judge_b_score, judge_a_reasoning, judge_b_reasoning "
+                    "FROM results WHERE result_id = ?",
                     (rid,),
                 ).fetchone()
-                ex_a, ex_b = (existing or (None, None))
+                ex_a, ex_b, ex_rsn_a, ex_rsn_b = (existing or (None, None, None, None))
                 final_a = p.judge_a_score if p.judge_a_score is not None else ex_a
                 final_b = p.judge_b_score if p.judge_b_score is not None else ex_b
+                final_rsn_a = new_rsn_a if new_rsn_a is not None else ex_rsn_a
+                final_rsn_b = new_rsn_b if new_rsn_b is not None else ex_rsn_b
                 disagree = 1 if is_disagreement(final_a, final_b) else 0
                 if final_a is None or final_b is None:
                     n_judge_err_rows += 1
@@ -440,10 +634,12 @@ def main() -> None:
                     """UPDATE results
                           SET judge_a_score = ?,
                               judge_b_score = ?,
+                              judge_a_reasoning = ?,
+                              judge_b_reasoning = ?,
                               judge_disagreement_flag = ?,
                               score_recomputed_at = ?
                         WHERE result_id = ?""",
-                    (final_a, final_b, disagree, ts, rid),
+                    (final_a, final_b, final_rsn_a, final_rsn_b, disagree, ts, rid),
                 )
                 n_updated += 1
             # Bump cost_so_far_gbp

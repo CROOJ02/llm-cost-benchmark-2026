@@ -54,11 +54,38 @@ CREATE TABLE IF NOT EXISTS results (
     response_parsed TEXT,
     output_format_valid INTEGER DEFAULT 1,
 
-    -- Scoring
+    -- Scoring (3-judge panel as of Day 11 revision; see methodology doc
+    -- § "Scope and rigor positioning"). Judge A = Opus 4.6 (Anthropic);
+    -- Judge B = GPT-5.5 (OpenAI, replacing Mistral large 2512 after Day 11
+    -- analysis revealed Mistral quality issues); Judge C = Gemini 3.1 Pro
+    -- preview (Google, added as third judge). Mistral's archived Day 10–11
+    -- scores + reasoning are preserved verbatim in judge_b_mistral_*
+    -- columns for transparency and v2 cross-judge analysis; they are NOT
+    -- used in canonical-score or disagreement-flag computation post-revision.
     rubric_score REAL,
     judge_a_score REAL,
     judge_b_score REAL,
+    judge_c_score REAL,
     judge_disagreement_flag INTEGER DEFAULT 0,
+    -- Tier-2 judge reasoning (Day 11). Each judge outputs one short sentence
+    -- per response in the JSON 'reasoning' field; persisted so Day 11
+    -- arbitration can show the judges' thinking alongside the scores. The
+    -- original Day 10 UPDATE statement discarded these — gap closed Day 11
+    -- via a --reasoning-only re-fire (later upgraded to --realign-scores).
+    -- See methodology doc § "Day 11 reasoning re-fire methodology".
+    judge_a_reasoning TEXT,
+    judge_b_reasoning TEXT,
+    judge_c_reasoning TEXT,
+    -- judge_c_name records the model ID actually called for the Judge C slot
+    -- (e.g. 'gemini-3.1-pro-preview'). Confirms the schema is aware of the
+    -- new judge and lets v2 analysis distinguish judge revisions over time.
+    judge_c_name TEXT,
+    -- Mistral archive (preserved from Day 10–11 original 2-judge sweep).
+    -- These columns are NOT updated post-Day-11-revision; their content is
+    -- frozen. Day 12 analysis can re-derive Mistral-vs-others comparisons
+    -- by reading these alongside the active judge_b/c columns.
+    judge_b_mistral_score REAL,
+    judge_b_mistral_reasoning TEXT,
     human_score REAL,
     final_score REAL,
     score_recomputed_at TEXT,
