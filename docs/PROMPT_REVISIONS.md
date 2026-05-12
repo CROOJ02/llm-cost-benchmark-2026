@@ -1,8 +1,8 @@
 # Prompt Revisions — All Categories
 
-This file consolidates all prompt-design revisions across categories. Apply revisions per the order below. Do not proceed to a later category's revisions until earlier ones are committed.
+This document records prompt-design revisions applied during Days 1–5 of the benchmark, with rationale for each change. Engineering buyers reviewing methodology rigour can use this to verify that prompts were authored deliberately, with documented design decisions rather than as ad-hoc test cases.
 
-When Claude Code applies revisions, save the modified files and briefly summarise what changed before moving on.
+The revisions span three prompt files — `customer_support.json`, `extraction.json`, and `rag_qa.json` — covering structural fixes (ambiguous JSON schemas, brittle rubrics) and realism upgrades (messy inputs, missing-field handling, contestable-answer notes). RAG QA needed no prompt content changes but received three scoring-methodology revisions.
 
 ---
 
@@ -273,41 +273,36 @@ Some prompts test multiple facts in a single answer. For example:
 
 > Score the response on a 0.0 to 1.0 scale. If the response satisfies all criteria fully and accurately, score 1.0. If the response covers part of the criteria correctly but is missing one or more components, score 0.5 to 0.7 depending on how much is covered. If the response is wrong on the central facts or misleading, score 0.0 to 0.3. Use intermediate values where appropriate; do not collapse to only 0 or 1.
 
-This is a forward-looking change for Day 10 judge implementation, not a prompt-file change. Note it now so Claude Code applies it when building the judge runner.
+This is a forward-looking change for the Day 10 judge implementation, not a prompt-file change.
 
 ---
 
-## What to do after applying all revisions
+## Revision scope summary
 
-1. Apply customer_support.json revisions (1.1 through 1.4)
-2. Apply extraction.json revisions (2.1 through 2.6) — note the file expands from 20 to 22 prompts
-3. Apply RAG Q&A scoring methodology revisions (3.1 through 3.3) — no prompt file changes, only PRD Section 7 updates and a forward-looking note for Day 10 judge implementation
-4. Validate all three files against the JSON schema validator (no schema-invalid prompts)
-5. Briefly summarise what changed in each file
-6. Wait for review before proceeding to summarisation prompts
+- `customer_support.json` — revisions 1.1 through 1.4 (system-prompt rewrite, 3 messier easy prompts, 2 diversified topic patterns, contestable-answer note on cs-019).
+- `extraction.json` — revisions 2.1 through 2.6 (rubric fixes on ext-013/014/016/018, 2 messier prompts replacing ext-002/006, 2 new missing-field prompts at ext-021/022; file expanded from 20 to 22 prompts).
+- `rag_qa.json` — revisions 3.1 through 3.3 (no prompt content changes; scoring-methodology revisions only — `supporting_sentences` rubric loosened, Tier-1 / Tier-2 split for the `answer` field, partial-credit guidance for Tier-2 judges).
 
 ---
 
-## Direction for summarisation prompts (next category)
+## Design discipline for summarisation prompts
 
-When you write the summarisation category, apply the same design discipline established for prior categories:
+The summarisation category (added after the revisions above) follows the same design discipline as the prior categories:
 
-- 20 prompts split 7 easy / 7 medium / 6 hard
-- All synthetic data (no real names, real companies, real public figures, real events)
-- Production-realistic input documents (1500-3000 word range as per PRD Section 3, Category 4)
-- Easy: clearly structured documents with obvious main points
-- Medium: documents requiring synthesis across multiple sections
-- Hard: documents with subtle main points, ambiguous structure, or content that invites hallucination
-- Tier 2 only scoring (no Tier 1 deterministic — summarisation has no single right answer)
-- Tier 2 criteria should specify what the summary must cover, what it must not contain, and any specific facts/numbers that must be accurate
+- 20 prompts split 7 easy / 7 medium / 6 hard.
+- All synthetic data (no real names, real companies, real public figures, real events).
+- Production-realistic input documents (1500–3000 word range per PRD Section 3, Category 4).
+- Easy: clearly structured documents with obvious main points.
+- Medium: documents requiring synthesis across multiple sections.
+- Hard: documents with subtle main points, ambiguous structure, or content that invites hallucination.
+- Tier 2 only scoring (no Tier 1 deterministic — summarisation has no single right answer).
+- Tier 2 criteria specify what the summary must cover, what it must not contain, and any specific facts/numbers that must be accurate.
 
-**Two specific concerns to design around for summarisation:**
+**Two specific concerns shaped the summarisation prompt set:**
 
-1. **Hallucination risk.** Summarisation is the category most likely to produce hallucinated facts. At least 3-5 of the prompts should include "tempting" content that could be misremembered or fabricated — a number that's stated once and easy to misquote, a name introduced briefly, a date that's adjacent to other dates. The Tier 2 criteria should explicitly call out the specific hallucinations to watch for.
+1. **Hallucination risk.** Summarisation is the category most likely to produce hallucinated facts. At least 3–5 of the prompts include "tempting" content that could be misremembered or fabricated — a number that's stated once and easy to misquote, a name introduced briefly, a date that's adjacent to other dates. The Tier 2 criteria explicitly call out the specific hallucinations to watch for.
 
-2. **Length/coverage trade-off.** A 3-bullet summary of a 3000-word document is severely compressed. Different models will choose different bullet structures. Some will lead with the most important facts; some will follow document order. The Tier 2 criteria should specify the _facts_ the summary must convey, not the _structure_ — accept any 3-bullet structure that covers the required facts.
-
-Show me the file when done. We'll review with the same approach as the prior categories.
+2. **Length/coverage trade-off.** A 3-bullet summary of a 3000-word document is severely compressed. Different models choose different bullet structures. Some lead with the most important facts; some follow document order. The Tier 2 criteria specify the _facts_ the summary must convey, not the _structure_ — any 3-bullet structure that covers the required facts is acceptable.
 
 ---
 

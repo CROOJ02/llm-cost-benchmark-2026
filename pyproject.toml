@@ -3,7 +3,7 @@ name = "llm-cost-benchmark-2026"
 version = "0.1.0"
 description = "2026 empirical benchmark on LLM cost optimisation"
 authors = [
-    {name = "James Crooks",email = "jam.crooks@googlemail.com"}
+    {name = "James Crooks",email = "james@jcdigital.org"}
 ]
 license = "MIT"
 readme = "README.md"

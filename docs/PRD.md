@@ -3,29 +3,28 @@
 **Project:** Public empirical research artefact supporting InferOps positioning
 **Version:** 1.0
 **Date:** April 2026
-**Status:** Pre-build
+**Status:** v1.0 shipped (May 2026)
 **Owner:** James Crooks
-**Repository:** `/Users/jamescrooks/llm-cost-benchmark-2026/` (local)
-**Publish target:** Wednesday 14 May 2026
+**Published:** 12 May 2026
 **API budget cap:** £300 hard, £250 soft warning
 
 ---
 
 ## 1. Why This Exists
 
-InferOps is currently in Phase 0.5 validation. Cold outreach to Heads of AI has produced zero replies on 50 emails. Deliverability is one suspected cause but a deeper problem is that we have no concrete artefact to anchor a credibility play in our outreach. We're a solo founder with a landing page and a thesis, asking Heads of AI for 20 minutes of their time.
+This benchmark exists to produce a public, defensible empirical artefact on production LLM cost optimisation. It is published as part of the InferOps research line — InferOps is an AI inference efficiency platform in pre-build validation — but the artefact itself is research, not product.
 
-This benchmark raises the credibility floor. We will run an empirical study answering one specific question:
+The benchmark answers one specific question:
 
 _Across the AI workloads enterprises actually run in production in 2026, where does the boundary fall between tasks where cheaper models produce equivalent quality and tasks where they don't? And how do other cost-optimisation levers (caching, output capping, batch processing, prompt compression) affect that boundary?_
 
-The artefact's job is not to be the InferOps product. It is a terminal piece of work — built, shipped, walked away from. It serves three goals:
+The artefact's job is to provide empirical evidence others can reproduce or critique. It is a terminal piece of work — built, shipped, walked away from. It serves three goals:
 
-1. **Generate a non-pitchy artefact** for cold email referencing ("I just shipped a 2026 benchmark on which AI tasks can safely run on cheaper models — curious whether the patterns match what you're seeing internally")
-2. **Empirically test the central InferOps claim** that safe cost optimisation is possible in real AI workloads, with public evidence rather than client conversations we can't share
-3. **Build credibility** on the measurement half of InferOps so discovery calls have somewhere to go
+1. **Produce a public artefact** documenting cost-quality trade-offs across production-tier LLMs and operational levers, at a level of methodological rigour the public capability benchmarks do not cover.
+2. **Empirically test the central InferOps claim** that safe cost optimisation is possible in real AI workloads, with public evidence rather than private client conversations.
+3. **Build credibility on the measurement half of InferOps** so subsequent product work has a published methodology to anchor to.
 
-This is research, not product. Code, data, and writeup are all public. Methodology is published in full so others can reproduce or critique. The benchmark is downstream of InferOps positioning — it serves the cold outreach campaign and Phase 0.5 discovery calls.
+This is research, not product. Code, data, and writeup are all public. Methodology is published in full so others can reproduce or critique.
 
 ---
 
@@ -540,12 +539,8 @@ llm-cost-benchmark-2026/
 ### Day 15 — Buffer / publish (Wed 14 May)
 
 - Anything that overran lands here
-- Cold-email hook line drafted (specific reference line for InferOps + LenzAI emails)
-- Publish:
-  - Push to GitHub (resolves the deferred GitHub auth task)
-  - Post to LinkedIn
-  - Submit to Hacker News (Tuesday morning UK time is optimal — adjust day if needed)
-- **Done when:** writeup is live on GitHub and at least one external channel
+- Publish to GitHub (resolves the deferred GitHub auth task)
+- **Done when:** writeup is live on GitHub
 
 ---
 
@@ -601,28 +596,7 @@ API keys never committed. `.env` is gitignored. `.env.example` is committed show
 
 ---
 
-## 12. Cold Outreach Hook
-
-The benchmark must produce one specific output for use in cold email: a line that references the writeup naturally and invites reply.
-
-**Draft target line (refined after writeup is done, not before):**
-
-> "Just shipped a 2026 benchmark on which AI workloads can safely run on cheaper models — turns out [HEADLINE FINDING] is sharper than I expected. [link]. Curious whether these patterns match what you're seeing in your stack."
-
-Where `[HEADLINE FINDING]` is filled in based on actual results. Do not pre-promise a specific finding before we have data.
-
-This line goes into:
-
-- InferOps cold email sequence
-- LenzAI cold email sequence (as credibility signal in email 2 or 3)
-- LinkedIn outreach DMs to Heads of AI
-- Any podcast or conference outreach
-
-**Note:** wiring this line into the actual InferOps/LenzAI templates is a separate post-ship task with its own checklist. It is not part of this PRD's definition of done.
-
----
-
-## 13. Definition of Done
+## 12. Definition of Done
 
 The benchmark ships when:
 
@@ -631,13 +605,12 @@ The benchmark ships when:
 3. **All data is reproducible.** `prompts/*.json`, `data/results.db`, and the runners are public. Reproducibility check on Day 14 passes within tolerance.
 4. **All result rows have `final_score` populated.**
 5. **Public repo is shippable.** README updated from placeholder to public-facing. License in place. No API keys leaked.
-6. **Cold-email hook line drafted** (templates wiring is separate post-ship task).
 
 Numerical thresholds (≥2,000 rows etc) are guidance, not gates. If we hit Day 14 with 1,800 rows but a publishable writeup, we ship.
 
 ---
 
-## 14. What This Is Not
+## 13. What This Is Not
 
 A reminder for week 2 when the temptation will be highest:
 
@@ -652,11 +625,3 @@ This is a **terminal piece of writing with code attached**. If we find ourselves
 ---
 
 _End of PRD v1.0_
-
-**Next steps after PRD review:**
-
-1. Review this PRD, push back on anything that feels wrong
-2. Iterate to v1.1 if needed
-3. Commit `docs/PRD.md` as the second commit on the local repo
-4. Open Claude Code in the repo, paste the PRD, ask it to set up the Poetry project per Day 1
-5. Begin Day 1 work
