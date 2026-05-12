@@ -47,6 +47,8 @@ PRICING_USD_PER_MTOK: dict[str, dict[str, float]] = {
     # well below the 200k threshold. cache_read_mult 0.10 reflects 10% of base
     # input price. (Original Gemini 3.1 Pro Preview choice was abandoned after
     # smoke-testing revealed mandatory thinking caused ~14 min/call latency.)
+    # Gemini was evaluated as a Judge C candidate during Day 11 panel revision
+    # and rejected after validation; pricing entry retained for v2 evaluation.
     "gemini-2.5-pro":          {"input":  1.25, "output": 10.00, "cache_read_mult": 0.10, "cache_creation_mult": 1.00},
     # GPT-5.5 added Day 11 as Judge B (replacing Mistral after the Day 10
     # quality-issues finding). Pricing per OpenAI (verified 2026-05-10):

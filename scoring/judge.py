@@ -3,8 +3,8 @@
 Day 10 of the benchmark. See docs/methodology/prompt_design_decisions.md
 § "Tier-2 dual-judge scoring (Day 10)".
 
-Design (locked at Day 10 sign-off):
-  - Two judges: Claude Opus 4.6 (Anthropic) + mistral-large-2512 (Mistral)
+Design (Day 10 baseline; updated Day 11 for panel revision):
+  - Two production judges in v1: Claude Opus 4.6 (Judge A) + GPT-5.5 (Judge B, replacing Mistral after Day 11 revision). Mistral and Gemini integrations retained for v2.
   - Per-(prompt, lever) batched call: 4 model responses anonymised A/B/C/D
     in deterministic-seed-randomised order; lever is structurally hidden
     because all 4 responses in a single call come from the same lever
@@ -15,7 +15,7 @@ Design (locked at Day 10 sign-off):
     second failure marks the row(s) as judge_error
 
 Public surface:
-  - JudgeName: 'opus' | 'mistral'
+  - JudgeName: 'opus' | 'mistral' | 'gpt55' | 'gemini' (mistral/gemini available but not in v1 production panel)
   - assemble_judge_call(prompt, responses_by_model, judge_seed) -> JudgeCall
   - call_judge(judge_name, judge_call) -> JudgeResponse
   - score_one_batch(prompt, responses_by_model, judge_name, ...) -> list[JudgeRowScore]

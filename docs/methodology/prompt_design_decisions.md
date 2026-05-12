@@ -33,7 +33,7 @@ Day 11 disagreement resolution methodology: After the GPT-5.5 panel revision red
 
 Mistral's original scores are preserved in `judge_b_mistral_score`/`judge_b_mistral_reasoning` columns for transparency and v2 analysis. The Gemini integration code remains in `scoring/judge.py` (validated, available via `judge_names=("gemini",)`) but is not invoked in the v1 production panel; `judge_c_*` columns remain NULL after the v1 sweep.
 
-v2 scope will be informed by community feedback and Phase 0.5 discovery conversations with production teams. Specific v2 candidates: family-disjoint judges (Grok 4, specialized fine-tuned judges), expanded model coverage (Llama, Gemini test models), additional levers (fine-tuning, model routing). Pull requests welcomed.
+v2 scope will be informed by community feedback and ongoing discovery conversations with production teams. Specific v2 candidates: family-disjoint judges (Grok 4, specialized fine-tuned judges), expanded model coverage (Llama, Gemini test models), additional levers (fine-tuning, model routing). Pull requests welcomed.
 
 ### GPT-5.5 judge temperature constraint (Day 11 operational finding)
 
@@ -337,4 +337,4 @@ Both deliverables computed by the Day 12 analysis script (not the Day 10 judge r
 
 ## Scope and limitations (v1)
 
-This benchmark measures four cost-optimisation levers across two providers' flagship/budget model pairs. The scope is deliberately narrow to enable rigorous methodology rather than broad coverage. v1 does not cover: Llama family models, Gemini family models, fine-tuned variants, multi-turn conversations, function-calling levers, or model-routing strategies. Statistical replication is single-shot per (prompt, model, lever) combination rather than averaged across multiple runs. v2 scope will be informed by community feedback and Phase 0.5 discovery conversations with production teams using the benchmark to inform their workload optimisation decisions.
+This benchmark measures four cost-optimisation levers across two providers' flagship/budget model pairs. The scope is deliberately narrow to enable rigorous methodology rather than broad coverage. v1 does not cover: Llama family models, Gemini family models, fine-tuned variants, multi-turn conversations, function-calling levers, or model-routing strategies. Statistical replication is single-shot per (prompt, model, lever) combination rather than averaged across multiple runs. v2 scope will be informed by community feedback and ongoing discovery conversations with production teams using the benchmark to inform their workload optimisation decisions.

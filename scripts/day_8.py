@@ -94,7 +94,7 @@ def main() -> None:
     print(f"cost_so_far_gbp after:  £{cost_after:.6f}", flush=True)
     print(f"  delta this Day 8:     £{cost_after - cost_before:.6f}", flush=True)
 
-    print(f"\nDAY 8 DONE. Pausing for review.", flush=True)
+    print(f"\nDay 8 phase complete (batch retrieve + compression).", flush=True)
 
 
 if __name__ == "__main__":

@@ -43,4 +43,4 @@ Total benchmark spend: £35.49 of a £300 hard cap.
 
 ---
 
-*v2 scope is informed by Phase 0.5 discovery findings and community feedback. Pull requests welcomed.*
+*v2 scope is informed by ongoing discovery work and community feedback. Pull requests welcomed.*

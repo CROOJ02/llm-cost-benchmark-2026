@@ -1,6 +1,6 @@
 """Layer 1 unit tests for Tier-2 dual-judge scoring.
 
-Covers (per the Day 10 sign-off requirements):
+Covers (per the Day 10 judge implementation requirements):
   - Position randomisation produces consistent seed-based output
   - Anonymisation correctly hides model identity
   - JSON validation catches malformed judge responses (parse + range)

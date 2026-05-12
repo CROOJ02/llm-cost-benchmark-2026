@@ -54,14 +54,12 @@ CREATE TABLE IF NOT EXISTS results (
     response_parsed TEXT,
     output_format_valid INTEGER DEFAULT 1,
 
-    -- Scoring (3-judge panel as of Day 11 revision; see methodology doc
-    -- § "Scope and rigor positioning"). Judge A = Opus 4.6 (Anthropic);
-    -- Judge B = GPT-5.5 (OpenAI, replacing Mistral large 2512 after Day 11
-    -- analysis revealed Mistral quality issues); Judge C = Gemini 3.1 Pro
-    -- preview (Google, added as third judge). Mistral's archived Day 10–11
-    -- scores + reasoning are preserved verbatim in judge_b_mistral_*
-    -- columns for transparency and v2 cross-judge analysis; they are NOT
-    -- used in canonical-score or disagreement-flag computation post-revision.
+    -- v1 final panel: Opus 4.6 (Judge A) + GPT-5.5 (Judge B).
+    -- The judge_c_* columns are preserved for v2 evaluation but were NOT populated in v1 production.
+    -- Gemini was evaluated as a third judge candidate during Day 11 panel revision and rejected
+    -- after validation. See docs/methodology/prompt_design_decisions.md § "Gemini judge model evaluation".
+    -- The judge_b_mistral_* columns archive the original Day 10 Mistral judgments verbatim
+    -- (replaced by GPT-5.5 in the Day 11 revision); preserved for v2 cross-judge analysis.
     rubric_score REAL,
     judge_a_score REAL,
     judge_b_score REAL,
@@ -77,8 +75,9 @@ CREATE TABLE IF NOT EXISTS results (
     judge_b_reasoning TEXT,
     judge_c_reasoning TEXT,
     -- judge_c_name records the model ID actually called for the Judge C slot
-    -- (e.g. 'gemini-3.1-pro-preview'). Confirms the schema is aware of the
-    -- new judge and lets v2 analysis distinguish judge revisions over time.
+    -- (intended use: v2 Gemini evaluation; NULL in v1 production). Confirms the
+    -- schema is aware of the new judge and lets v2 analysis distinguish judge
+    -- revisions over time.
     judge_c_name TEXT,
     -- Mistral archive (preserved from Day 10–11 original 2-judge sweep).
     -- These columns are NOT updated post-Day-11-revision; their content is

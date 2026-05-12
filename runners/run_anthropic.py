@@ -103,9 +103,6 @@ def call_anthropic(
         messages=messages,
     )
     latency_ms = int((time.perf_counter() - started) * 1000)
-    # TODO(Day 9): Tier 1 scorer must defensively strip markdown fences from
-    # response_text before JSON parsing. Sonnet 4.6 wraps JSON in ```json ```
-    # despite system-prompt instructions to "respond ONLY with a JSON object".
     response_text = "".join(b.text for b in resp.content if b.type == "text")
     return {
         "response_text": response_text,

@@ -1,6 +1,6 @@
 """Layer 1 unit tests for the Day 11 arbitration CLI core.
 
-Covers (per the Day 11 sign-off requirements):
+Covers (per the Day 11 arbitration requirements):
   - Resume detection: identifies first unscored case in active ordering
   - Immediate save: human_score + human_note write back to CSV per case
   - Score range validation: accepts [0.0, 1.0]; rejects out-of-range / non-numeric
