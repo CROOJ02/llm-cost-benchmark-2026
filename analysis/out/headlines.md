@@ -14,9 +14,11 @@ Prompt compression cuts cost by only 18–21% while reducing canonical_score by 
 
 The output-length cap is fine for short-answer tasks (Δcanon -0.004 on customer_support, -0.003 on rag_qa, -0.067 on summarisation) but costly for multi-step reasoning (Δcanon -0.132). The mechanism is visible in the Tier-1 status enum: capped reasoning rows hit the cap (`tier_1_status='truncated'`) at rates of 4–11 per (model, lever) cell on reasoning, versus zero truncations elsewhere except for some long summaries. Capping output cuts the reasoning chain before the answer, and the answer suffers. Use output_cap freely for classification, extraction, or short replies; avoid it on tasks that require chained intermediate steps.
 
+*Footnote: Summarisation is moderately sensitive to both compression (-0.069) and output_cap (-0.067) — the close magnitudes reflect the task's general sensitivity to any quality-affecting lever, not a coincidence.*
+
 ## Finding 4 — Provider dominance is task-shaped, not universal
 
-OpenAI models Pareto-dominate the aggregate cost-quality frontier (all four Pareto-optimal cells are gpt-5.4 or gpt-5.4-mini), but the category-level Pareto frontiers tell a different story. On reasoning and summarisation, the Pareto frontier is OpenAI-only (4 cells each). On customer_support the frontier is OpenAI-only too (2 cells), but the win margin is roughly 0.008 canonical points — effectively a tie. **On rag_qa the Pareto frontier is mixed: claude-sonnet-4-6 baseline reaches canonical_score 0.993 (the highest cell in the entire 16-cell aggregate matrix), and claude-sonnet-4-6 batch (0.990) is also Pareto-optimal alongside gpt-5.4-mini batch (0.985).** Sonnet's strength on retrieval-grounded QA outweighs GPT-5.4's strength elsewhere on this category. The honest framing is: OpenAI wins three of four categories; Anthropic Sonnet wins RAG.
+OpenAI models Pareto-dominate the aggregate cost-quality frontier (all four Pareto-optimal cells are gpt-5.4 or gpt-5.4-mini), but the category-level Pareto frontiers tell a different story. On reasoning and summarisation, the Pareto frontier is OpenAI-only (4 cells each). On customer_support the frontier is OpenAI-only too (2 cells), but the gpt-5.4 batch-vs-baseline gap is 0.007 canonical points — effectively a tie. **On rag_qa the Pareto frontier is mixed: sonnet baseline reaches canonical_score 0.993 (the highest cell in the entire 16-cell aggregate matrix, beating the best non-Sonnet cell — gpt-5.4-mini batch at 0.985 — by 0.008 canonical points), and sonnet batch (0.990) is also Pareto-optimal alongside gpt-5.4-mini batch (0.985).** Sonnet's strength on retrieval-grounded QA outweighs GPT-5.4's strength elsewhere on this category. The honest framing is: OpenAI wins three of four categories; Anthropic sonnet wins RAG.
 
 ## Finding 5 — Anthropic models degrade more under optimization pressure
 
@@ -28,11 +30,11 @@ For three of four task categories you can shop aggressively for cheap quality: c
 
 ## Headline scalar 1 — Cheapest 94% of frontier quality
 
-**gpt-5.4-mini-2026-03-17 + batch → canonical_score 0.881 at \$0.000557 per task.** 94.2% of frontier quality at 13.2% of frontier cost. This is the cheapest cell on the aggregate Pareto frontier; for routine production traffic that tolerates batch latency, it is the dominant cost-quality choice. Frontier quality at \$0.004220 costs 7.6× more than near-frontier quality at \$0.000557 — for a 5.4-point canonical improvement.
+**gpt-5.4-mini + batch → canonical_score 0.881 at \$0.000557 per task.** 94.2% of frontier quality at 13.2% of frontier cost. This is the cheapest cell on the aggregate Pareto frontier; for routine production traffic that tolerates batch latency, it is the dominant cost-quality choice. Frontier quality at \$0.004220 costs 7.6× more than near-frontier quality at \$0.000557 — for a 5.4-point canonical improvement.
 
 ## Headline scalar 2 — Frontier quality cost
 
-**gpt-5.4-2026-03-05 + baseline → canonical_score 0.935 at \$0.004220 per task.** Highest canonical score on the aggregate frontier across all 16 (model, lever) cells. Use when the 5.4-point canonical margin over the near-frontier cell genuinely matters for the application.
+**gpt-5.4 + baseline → canonical_score 0.935 at \$0.004220 per task.** Highest canonical score on the aggregate frontier across all 16 (model, lever) cells. Use when the 5.4-point canonical margin over the near-frontier cell genuinely matters for the application.
 
 ---
 

@@ -10,7 +10,7 @@ Day 12 closed with the v1 writeup spine final in `analysis/out/headlines.md`. Da
 
 3. **Summarisation degrades similarly under output_cap (−0.067) and compression (−0.069) — close numbers, worth a footnote.** A reader could read the near-equality as a coincidence or as masking a structural effect. The mechanism is plausible: long-form summarisation outputs hit the output_cap *and* lose detail under compression in roughly the same way (both effectively reduce the model's output budget). Add a one-sentence footnote in Finding 3, framed as "summarisation's similar drops under output_cap and compression both reflect output-budget pressure, not a coincidence." Verify by inspecting `tier_1_status='truncated'` count on summarisation/output_cap before asserting.
 
-4. **GPT-5.4 bit-for-bit batch determinism finding captured in project memory.** See `~/.claude/projects/-Users-jamescrooks-llm-cost-benchmark-2026/memory/project_gpt54_batch_determinism.md`. No further action needed on this one — recorded so future cross-provider work can reference it without re-deriving.
+4. **GPT-5.4 bit-for-bit batch determinism finding captured in project memory.** ✅ Done Day 12. See `~/.claude/projects/-Users-jamescrooks-llm-cost-benchmark-2026/memory/project_gpt54_batch_determinism.md`. Recorded so future cross-provider work can reference it without re-deriving. No further action.
 
 ## Day 13 deliverables — chart layer
 

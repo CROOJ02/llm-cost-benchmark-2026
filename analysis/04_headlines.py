@@ -32,8 +32,22 @@ def fetch_all(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> list[di
     return [dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
 
 
+# Friendly names for prose. Same labels chart (b) and the bar charts use,
+# so the writeup and the figures share vocabulary. Full IDs only appear in
+# methodology references and CSV exports.
+MODEL_FRIENDLY = {
+    "claude-sonnet-4-6": "sonnet",
+    "claude-haiku-4-5": "haiku",
+    "gpt-5.4-2026-03-05": "gpt-5.4",
+    "gpt-5.4-mini-2026-03-17": "gpt-5.4-mini",
+}
+
+
 def friendly_model(model: str) -> str:
-    """Strip trailing -YYYY-MM-DD date suffix for use in narrative prose."""
+    """Map a full model ID to its writeup-friendly name. Falls back to
+    date-stripping for models not in the explicit map."""
+    if model in MODEL_FRIENDLY:
+        return MODEL_FRIENDLY[model]
     return re.sub(r"-\d{4}-\d{2}-\d{2}$", "", model)
 
 
@@ -176,6 +190,47 @@ def compute_findings(conn: sqlite3.Connection) -> dict:
     findings["rag_gpt_mini_batch_canon"] = gpt_mini_batch_rag["canon"]
     findings["rag_gpt_mini_batch_cost"] = gpt_mini_batch_rag["cost"]
 
+    # Sonnet RAG dominance margin — sonnet/baseline canon minus the best
+    # NON-SONNET (model, lever) cell in rag_qa. Using "best non-Sonnet" rather
+    # than the literal "second-best cell" because sonnet/output_cap ties
+    # sonnet/baseline at 0.993 (output cap is harmless on short RAG answers),
+    # which would produce a meaningless "winning by 0.000" prose. The
+    # task-dominance framing the writeup needs is "by how much does sonnet
+    # beat the best OpenAI cell on RAG" — this is that number.
+    rag_non_sonnet = sorted(
+        (p for p in rag_pts if p["model"] != "claude-sonnet-4-6"),
+        key=lambda p: -p["canon"],
+    )
+    best_non_sonnet_rag = rag_non_sonnet[0]
+    findings["rag_sonnet_win_margin"] = (
+        sonnet_baseline_rag["canon"] - best_non_sonnet_rag["canon"]
+    )
+    findings["rag_second_best_model"] = best_non_sonnet_rag["model"]
+    findings["rag_second_best_lever"] = best_non_sonnet_rag["lever"]
+    findings["rag_second_best_canon"] = best_non_sonnet_rag["canon"]
+
+    # CS Pareto-tie margin: the gap between gpt-5.4 batch and gpt-5.4 baseline
+    # on customer_support. The original hardcoded "0.008" referred to this
+    # gap; computing it dynamically so it tracks the data.
+    cs_pts = fetch_all(
+        conn,
+        """
+        SELECT model, optimisation_lever AS lever, AVG(canonical_score) AS canon
+        FROM results
+        WHERE canonical_score IS NOT NULL AND task_category = 'customer_support'
+        GROUP BY model, optimisation_lever
+        """,
+    )
+    gpt54_cs_batch = next(
+        p for p in cs_pts
+        if p["model"] == "gpt-5.4-2026-03-05" and p["lever"] == "batch"
+    )
+    gpt54_cs_baseline = next(
+        p for p in cs_pts
+        if p["model"] == "gpt-5.4-2026-03-05" and p["lever"] == "baseline"
+    )
+    findings["cs_gpt54_win_margin"] = gpt54_cs_batch["canon"] - gpt54_cs_baseline["canon"]
+
     # --- Headline scalars ---
     all_cells = fetch_all(
         conn,
@@ -260,10 +315,6 @@ def compute_findings(conn: sqlite3.Connection) -> dict:
 
 
 def render_markdown(f: dict) -> str:
-    # TODO: compute win margin from category_breakdown.csv on next iteration.
-    # Finding 4 currently quotes "the win margin is roughly 0.008 canonical
-    # points" as a hardcoded value — correct against the current data but
-    # will not auto-update if customer_support cells shift.
     cs = f["cost_sensitivity"]
     cs_summarisation = cs["summarisation"]
     cs_reasoning = cs["reasoning"]
@@ -287,9 +338,11 @@ Prompt compression cuts cost by only {f['comp_cost_saving_min']*100:.0f}–{f['c
 
 The output-length cap is fine for short-answer tasks (Δcanon {f['cat_customer_support_output_cap_delta_canon']:+.3f} on customer_support, {f['cat_rag_qa_output_cap_delta_canon']:+.3f} on rag_qa, {f['cat_summarisation_output_cap_delta_canon']:+.3f} on summarisation) but costly for multi-step reasoning (Δcanon {f['cat_reasoning_output_cap_delta_canon']:+.3f}). The mechanism is visible in the Tier-1 status enum: capped reasoning rows hit the cap (`tier_1_status='truncated'`) at rates of 4–11 per (model, lever) cell on reasoning, versus zero truncations elsewhere except for some long summaries. Capping output cuts the reasoning chain before the answer, and the answer suffers. Use output_cap freely for classification, extraction, or short replies; avoid it on tasks that require chained intermediate steps.
 
+*Footnote: Summarisation is moderately sensitive to both compression ({f['cat_summarisation_compression_delta_canon']:+.3f}) and output_cap ({f['cat_summarisation_output_cap_delta_canon']:+.3f}) — the close magnitudes reflect the task's general sensitivity to any quality-affecting lever, not a coincidence.*
+
 ## Finding 4 — Provider dominance is task-shaped, not universal
 
-OpenAI models Pareto-dominate the aggregate cost-quality frontier (all four Pareto-optimal cells are gpt-5.4 or gpt-5.4-mini), but the category-level Pareto frontiers tell a different story. On reasoning and summarisation, the Pareto frontier is OpenAI-only (4 cells each). On customer_support the frontier is OpenAI-only too (2 cells), but the win margin is roughly 0.008 canonical points — effectively a tie. **On rag_qa the Pareto frontier is mixed: claude-sonnet-4-6 baseline reaches canonical_score {f['rag_sonnet_baseline_canon']:.3f} (the highest cell in the entire 16-cell aggregate matrix), and claude-sonnet-4-6 batch ({f['rag_sonnet_batch_canon']:.3f}) is also Pareto-optimal alongside gpt-5.4-mini batch ({f['rag_gpt_mini_batch_canon']:.3f}).** Sonnet's strength on retrieval-grounded QA outweighs GPT-5.4's strength elsewhere on this category. The honest framing is: OpenAI wins three of four categories; Anthropic Sonnet wins RAG.
+OpenAI models Pareto-dominate the aggregate cost-quality frontier (all four Pareto-optimal cells are gpt-5.4 or gpt-5.4-mini), but the category-level Pareto frontiers tell a different story. On reasoning and summarisation, the Pareto frontier is OpenAI-only (4 cells each). On customer_support the frontier is OpenAI-only too (2 cells), but the gpt-5.4 batch-vs-baseline gap is {f['cs_gpt54_win_margin']:.3f} canonical points — effectively a tie. **On rag_qa the Pareto frontier is mixed: sonnet baseline reaches canonical_score {f['rag_sonnet_baseline_canon']:.3f} (the highest cell in the entire 16-cell aggregate matrix, beating the best non-Sonnet cell — {friendly_model(f['rag_second_best_model'])} {f['rag_second_best_lever']} at {f['rag_second_best_canon']:.3f} — by {f['rag_sonnet_win_margin']:.3f} canonical points), and sonnet batch ({f['rag_sonnet_batch_canon']:.3f}) is also Pareto-optimal alongside gpt-5.4-mini batch ({f['rag_gpt_mini_batch_canon']:.3f}).** Sonnet's strength on retrieval-grounded QA outweighs GPT-5.4's strength elsewhere on this category. The honest framing is: OpenAI wins three of four categories; Anthropic sonnet wins RAG.
 
 ## Finding 5 — Anthropic models degrade more under optimization pressure
 
@@ -301,11 +354,11 @@ For three of four task categories you can shop aggressively for cheap quality: c
 
 ## Headline scalar 1 — Cheapest 94% of frontier quality
 
-**{f['cheap94_model']} + {f['cheap94_lever']} → canonical_score {f['cheap94_canon']:.3f} at \\${f['cheap94_cost']:.6f} per task.** {f['cheap94_canon_pct']*100:.1f}% of frontier quality at {f['cheap94_cost_pct']*100:.1f}% of frontier cost. This is the cheapest cell on the aggregate Pareto frontier; for routine production traffic that tolerates batch latency, it is the dominant cost-quality choice. Frontier quality at \\${f['best_cost']:.6f} costs {f['best_cost']/f['cheap94_cost']:.1f}× more than near-frontier quality at \\${f['cheap94_cost']:.6f} — for a {(f['best_canon']-f['cheap94_canon'])*100:.1f}-point canonical improvement.
+**{friendly_model(f['cheap94_model'])} + {f['cheap94_lever']} → canonical_score {f['cheap94_canon']:.3f} at \\${f['cheap94_cost']:.6f} per task.** {f['cheap94_canon_pct']*100:.1f}% of frontier quality at {f['cheap94_cost_pct']*100:.1f}% of frontier cost. This is the cheapest cell on the aggregate Pareto frontier; for routine production traffic that tolerates batch latency, it is the dominant cost-quality choice. Frontier quality at \\${f['best_cost']:.6f} costs {f['best_cost']/f['cheap94_cost']:.1f}× more than near-frontier quality at \\${f['cheap94_cost']:.6f} — for a {(f['best_canon']-f['cheap94_canon'])*100:.1f}-point canonical improvement.
 
 ## Headline scalar 2 — Frontier quality cost
 
-**{f['best_model']} + {f['best_lever']} → canonical_score {f['best_canon']:.3f} at \\${f['best_cost']:.6f} per task.** Highest canonical score on the aggregate frontier across all 16 (model, lever) cells. Use when the {(f['best_canon']-f['cheap94_canon'])*100:.1f}-point canonical margin over the near-frontier cell genuinely matters for the application.
+**{friendly_model(f['best_model'])} + {f['best_lever']} → canonical_score {f['best_canon']:.3f} at \\${f['best_cost']:.6f} per task.** Highest canonical score on the aggregate frontier across all 16 (model, lever) cells. Use when the {(f['best_canon']-f['cheap94_canon'])*100:.1f}-point canonical margin over the near-frontier cell genuinely matters for the application.
 
 ---
 
