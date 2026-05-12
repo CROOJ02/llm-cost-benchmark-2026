@@ -26,6 +26,10 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "data" / "results.db"
 OUT_DIR = ROOT / "analysis" / "out"
 OUT_CSV = OUT_DIR / "category_breakdown.csv"
+# Per-(category, model, lever) grain CSV — 64 rows. Used by chart (b)
+# category_heatmap; the aggregated category_breakdown.csv above only has the
+# 16 (category, lever) rows so does not expose per-model variation.
+OUT_CSV_BY_MODEL = OUT_DIR / "category_model_lever.csv"
 
 CATEGORY_LEVER_QUERY = """
 SELECT
@@ -238,6 +242,24 @@ def main() -> None:
     by_cat_points: dict[str, list[dict]] = defaultdict(list)
     for r in cell_rows:
         by_cat_points[r["task_category"]].append(r)
+
+    # Emit per-(category, model, lever) CSV for chart (b) consumption.
+    by_model_rows = [
+        {
+            "task_category": r["task_category"],
+            "model": r["model"],
+            "lever": r["lever"],
+            "n_rows": r["n_rows"],
+            "mean_canonical_score": round(r["mean_canonical"], 4),
+            "mean_cost_usd": round(r["mean_cost_usd"], 6),
+            "tier_1_pass_rate_all": round(r["tier_1_pass_rate_all"], 4),
+        }
+        for r in cell_rows
+    ]
+    with OUT_CSV_BY_MODEL.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(by_model_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(by_model_rows)
 
     print("\n[per-cat pareto] (model, lever) Pareto frontier within each category:")
     for cat in categories:
